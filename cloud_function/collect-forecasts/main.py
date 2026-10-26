@@ -53,6 +53,9 @@ def collect_one(client, netid, bucket_name, now):
     try:
         blob = their_bucket.blob(STUDENT_MASTER_KEY)
         if not blob.exists():
+            # exists() says False for a missing BUCKET too: listing tells the two apart (NotFound = no such bucket)
+            for _ in client.list_blobs(bucket_name, prefix="energy/", max_results=1):
+                break
             status["status"] = "no_forecasts_yet"
             status["message"] = "Shared, but no forecasts_master.csv yet (no model shipped, Lab 5 Part 7)."
             return status, None, None
