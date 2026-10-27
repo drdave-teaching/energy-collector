@@ -4,6 +4,7 @@
 # ============================================================================================================
 PROJECT_ID="opim5512-collector-f26"          # <-- the project ID you just created (Console > New project)
 REGION="us-central1"
+ACTUALS_BUCKET="energy-dww-practice-f26"         # <-- a bucket where scraper-isone runs (yours); the leaderboard scores against its live CT load
 BUCKET="${PROJECT_ID}"
 COLLECTOR_SA="collector@${PROJECT_ID}.iam.gserviceaccount.com"
 INVOKER_SA="collector-invoker@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -36,12 +37,15 @@ if ! gcloud storage objects describe "gs://${BUCKET}/roster/roster.csv" >/dev/nu
 fi
 echo "✅ 4. roster at gs://${BUCKET}/roster/roster.csv"
 
+# 4b. The collector reads the actual load (and ISO-NE's forecast) from your own energy bucket
+gcloud storage buckets add-iam-policy-binding "gs://${ACTUALS_BUCKET}"   --member="serviceAccount:${COLLECTOR_SA}" --role="roles/storage.objectViewer" >/dev/null   && echo "✅ 4b. actuals from gs://${ACTUALS_BUCKET}"
+
 # 5. Deploy the collector function
 rm -rf ~/energy-collector && git clone -q https://github.com/drdave-teaching/energy-collector.git ~/energy-collector
 gcloud functions deploy collect-forecasts --gen2 --region="${REGION}" --runtime=python312 \
   --source="${HOME}/energy-collector/cloud_function/collect-forecasts" --entry-point=collect_http \
   --trigger-http --no-allow-unauthenticated --service-account="${COLLECTOR_SA}" \
-  --set-env-vars="COLLECTOR_BUCKET=${BUCKET}" --memory=1Gi --timeout=540 --quiet \
+  --set-env-vars="COLLECTOR_BUCKET=${BUCKET},ACTUALS_BUCKET=${ACTUALS_BUCKET}" --memory=1Gi --timeout=540 --quiet \
   && echo "✅ 5. collect-forecasts deployed"
 
 # 6. Run it every hour at :35 (students' forecast-24h runs at :20)

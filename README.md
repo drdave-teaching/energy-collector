@@ -52,6 +52,26 @@ gcloud storage cat gs://$BUCKET/class/status_latest.csv
 Load the class table anywhere with `pd.read_csv("gs://<bucket>/class/forecasts_master.csv")` (Colab, after
 `auth.authenticate_user()` with your Gmail), or open it in the Console.
 
+## The leaderboard (`class/leaderboard.csv`, refreshed every hour)
+Every forecast hour whose actual load is known gets one **score**, the same for every lab:
+
+| Student gives | Score per forecast hour |
+|---|---|
+| expected MW only (Lab 5) | absolute error, \|actual − expected\| |
+| low, expected, high MW (Lab 6, final project; columns `predicted_low_mw`, `predicted_high_mw` = 10th and 90th percentiles) | weighted interval score = (0.5·\|actual − expected\| + 0.1·interval score) / 1.5, where interval score = width + 10 × how far the actual fell outside low–high |
+
+A point-only forecast's weighted interval score is just its absolute error, so everyone ranks on one scale, and a
+range only helps when it is narrow **and** honest.
+
+**Rank = skill %**: 1 − score ÷ (error of "same hour yesterday"), worked out separately for 1–6, 7–12, 13–18 and 19–24
+hours ahead and averaged, so the hard far-ahead hours count as much as the easy ones. Everyone is compared on the
+exact hours they forecast, so joining late is no penalty. Two baseline rows: same hour yesterday (skill 0) and ISO New
+England's own forecast (the newest version published before each forecast).
+
+- Actual load = live Connecticut five-minute load averaged per hour (provisional), read from `ACTUALS_BUCKET`.
+- Forecasts are frozen when collected: a later edit in a student's bucket changes nothing.
+- `class/leaderboard_by_lead.csv` = error by hours ahead; `class/scored_forecasts.csv` = every scored forecast hour.
+
 ## Cost and stopping
 One function run per hour reading about 30 small CSVs: well under $1 a month. To pause:
 `gcloud scheduler jobs pause collect-forecasts-hourly --location=us-central1`.
