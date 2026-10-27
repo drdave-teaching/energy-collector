@@ -172,8 +172,8 @@ def score_forecasts(master, actual, isone):
     pairs["range_width_mw"] = np.nan
     if "predicted_low_mw" in pairs.columns and "predicted_high_mw" in pairs.columns:
         has_range = pairs["predicted_low_mw"].notna() & pairs["predicted_high_mw"].notna()
-        low = pairs["predicted_low_mw"]
-        high = pairs["predicted_high_mw"]
+        low = np.minimum(pairs["predicted_low_mw"], pairs["predicted_high_mw"])    # an upside-down range is put right
+        high = np.maximum(pairs["predicted_low_mw"], pairs["predicted_high_mw"])
         y = pairs["actual_mw"]
         width = high - low
         miss = (low - y).clip(lower=0) + (y - high).clip(lower=0)
