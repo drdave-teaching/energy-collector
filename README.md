@@ -18,7 +18,7 @@ Because it copies each student's whole `forecasts_master.csv`, it backfills auto
 Nov 10 still shows every forecast since their Lab 5 night. If a student stops sharing, their last copy is kept.
 
 ## Once: set it up (about 5 minutes)
-1. Console → **New project**, for example `opim5512-energy-collector`, on your billing account. Add a small budget alert.
+1. Console → **New project**, for example `opim5512-collector-f26`, on your billing account. Add a small budget alert.
 2. Open Cloud Shell in that project and paste [`setup_collector.sh`](setup_collector.sh) (change `PROJECT_ID` on the first
    line if you picked another name). Count six ✅ lines.
 3. The last lines print the account students share with: `collector@<your project>.iam.gserviceaccount.com`.
@@ -29,7 +29,7 @@ Each student runs **Lab 5 Part 7e** (one cell). It grants your collector read ac
 `netid,bucket`, which they paste into the **Submit Lab 5** text box (or the Teams chat). Then, in Cloud Shell:
 
 ```bash
-BUCKET=opim5512-energy-collector
+BUCKET=opim5512-collector-f26
 gcloud storage cp gs://$BUCKET/roster/roster.csv roster.csv
 cat >> roster.csv          # paste the students' lines, then press Ctrl+D
 gcloud storage cp roster.csv gs://$BUCKET/roster/roster.csv

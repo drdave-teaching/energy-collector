@@ -2,7 +2,7 @@
 # Dr. Dave's class forecast collector: one-time setup. Paste into Cloud Shell, in your NEW collector project.
 # Takes about 5 minutes. Safe to re-run (every step skips what already exists).
 # ============================================================================================================
-PROJECT_ID="opim5512-energy-collector"          # <-- the project ID you just created (Console > New project)
+PROJECT_ID="opim5512-collector-f26"          # <-- the project ID you just created (Console > New project)
 REGION="us-central1"
 BUCKET="${PROJECT_ID}"
 COLLECTOR_SA="collector@${PROJECT_ID}.iam.gserviceaccount.com"
