@@ -26,8 +26,11 @@ import pandas as pd
 from google.api_core import exceptions as gexc
 from google.cloud import storage
 
+import leaderboard_page
+
 COLLECTOR_BUCKET = os.getenv("COLLECTOR_BUCKET", "")
 ACTUALS_BUCKET = os.getenv("ACTUALS_BUCKET", "")     # a bucket whose scraper-isone runs (Dr. Dave's own), shared with the collector
+PUBLIC_BUCKET = os.getenv("PUBLIC_BUCKET", "")       # public bucket for the student leaderboard page (nicknames only)
 ROSTER_KEY = "roster/roster.csv"
 STUDENT_MASTER_KEY = "energy/datasets/forecasts_master.csv"
 STUDENT_CARD_KEY = "energy/models/model_card.json"
@@ -45,6 +48,17 @@ def read_csv(bucket, key):
     if not blob.exists():
         return None
     return pd.read_csv(io.BytesIO(blob.download_as_bytes()))
+
+
+def read_roster(bucket):
+    """roster.csv: netid,bucket,nickname (nickname optional; a line with only netid,bucket is fine)."""
+    blob = bucket.blob(ROSTER_KEY)
+    if not blob.exists():
+        return None
+    roster = pd.read_csv(io.BytesIO(blob.download_as_bytes()), header=0, names=["netid", "bucket", "nickname"],
+                         usecols=[0, 1, 2], dtype=str, keep_default_na=False, on_bad_lines="skip")
+    roster = roster[roster["netid"].str.strip() != ""]
+    return roster
 
 
 def write_csv(bucket, key, table):
@@ -208,10 +222,10 @@ def leaderboard_row(name, rows, score_column, prediction_column):
 def build_leaderboard(client, mine, master):
     actual = load_actuals(client)
     if actual is None:
-        return 0
+        return None, None
     pairs = score_forecasts(master, actual, load_isone(client))
     if len(pairs) == 0:
-        return 0
+        return None, None
     rows = []
     for netid, group in pairs.groupby("netid"):
         row = leaderboard_row(netid, group, "score", "predicted_load_mw")
@@ -237,16 +251,16 @@ def build_leaderboard(client, mine, master):
         same_hour_yesterday_mae_mw=("baseline_abs_error_mw", "mean"), isone_mae_mw=("isone_abs_error_mw", "mean")).round(1)
     write_csv(mine, "class/leaderboard_by_lead.csv", by_lead.reset_index())
     write_csv(mine, "class/scored_forecasts.csv", pairs.drop(columns=["issued", "target"]))
-    return int(len(board))
+    return board, by_lead.reset_index()
 
 
 def run_once():
     now = datetime.now(timezone.utc)
     client = storage.Client()
     mine = client.bucket(COLLECTOR_BUCKET)
-    roster = read_csv(mine, ROSTER_KEY)
+    roster = read_roster(mine)
     if roster is None or len(roster) == 0:
-        return {"status": "no_roster", "message": "Upload gs://" + COLLECTOR_BUCKET + "/" + ROSTER_KEY + " (netid,bucket)."}
+        return {"status": "no_roster", "message": "Upload gs://" + COLLECTOR_BUCKET + "/" + ROSTER_KEY + " (netid,bucket,nickname)."}
     roster["netid"] = roster["netid"].astype(str).str.strip().str.lower()
     roster["bucket"] = roster["bucket"].astype(str).str.strip().str.replace("gs://", "", regex=False).str.strip("/")
     roster = roster.drop_duplicates("netid", keep="last")
@@ -301,7 +315,15 @@ def run_once():
     leaderboard_rows = 0
     if len(tables) > 0 and ACTUALS_BUCKET:
         try:                                  # a leaderboard problem never stops the collecting
-            leaderboard_rows = build_leaderboard(client, mine, master)
+            board, by_lead = build_leaderboard(client, mine, master)
+            if board is not None:
+                leaderboard_rows = int(len(board))
+                if PUBLIC_BUCKET:
+                    waiting = int((~roster["netid"].isin(board["netid"])).sum())
+                    page = leaderboard_page.render(board, by_lead, roster, waiting)
+                    blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
+                    blob.cache_control = "public, max-age=60"
+                    blob.upload_from_string(page, content_type="text/html; charset=utf-8")
         except Exception as err:
             logging.error("Leaderboard: %s\n%s", err, traceback.format_exc())
 
