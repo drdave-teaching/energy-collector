@@ -5,6 +5,7 @@
 PROJECT_ID="opim5512-collector-f26"          # <-- the project ID you just created (Console > New project)
 REGION="us-central1"
 ACTUALS_BUCKET="energy-dww-practice-f26"         # <-- a bucket where scraper-isone runs (yours); the leaderboard scores against its live CT load
+PUBLIC_BUCKET="opim5512-leaderboard-f26"       # <-- the PUBLIC student leaderboard page (nicknames only); a new, unused name
 BUCKET="${PROJECT_ID}"
 COLLECTOR_SA="collector@${PROJECT_ID}.iam.gserviceaccount.com"
 INVOKER_SA="collector-invoker@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -33,19 +34,30 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
 
 # 4. An empty roster (add students later, see README)
 if ! gcloud storage objects describe "gs://${BUCKET}/roster/roster.csv" >/dev/null 2>&1; then
-  printf "netid,bucket\n" | gcloud storage cp - "gs://${BUCKET}/roster/roster.csv"
+  printf "netid,bucket,nickname\n" | gcloud storage cp - "gs://${BUCKET}/roster/roster.csv"
 fi
 echo "✅ 4. roster at gs://${BUCKET}/roster/roster.csv"
 
 # 4b. The collector reads the actual load (and ISO-NE's forecast) from your own energy bucket
-gcloud storage buckets add-iam-policy-binding "gs://${ACTUALS_BUCKET}"   --member="serviceAccount:${COLLECTOR_SA}" --role="roles/storage.objectViewer" >/dev/null   && echo "✅ 4b. actuals from gs://${ACTUALS_BUCKET}"
+gcloud storage buckets add-iam-policy-binding "gs://${ACTUALS_BUCKET}" \
+  --member="serviceAccount:${COLLECTOR_SA}" --role="roles/storage.objectViewer" >/dev/null \
+  && echo "✅ 4b. actuals from gs://${ACTUALS_BUCKET}"
+
+# 4c. The public leaderboard page: its own bucket, readable by anyone, written only by the collector
+if ! gcloud storage buckets describe "gs://${PUBLIC_BUCKET}" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${PUBLIC_BUCKET}" --location="${REGION}" --uniform-bucket-level-access
+fi
+gcloud storage buckets add-iam-policy-binding "gs://${PUBLIC_BUCKET}" --member="allUsers" --role="roles/storage.objectViewer" >/dev/null
+gcloud storage buckets add-iam-policy-binding "gs://${PUBLIC_BUCKET}" \
+  --member="serviceAccount:${COLLECTOR_SA}" --role="roles/storage.objectAdmin" >/dev/null \
+  && echo "✅ 4c. public page: https://storage.googleapis.com/${PUBLIC_BUCKET}/index.html"
 
 # 5. Deploy the collector function
 rm -rf ~/energy-collector && git clone -q https://github.com/drdave-teaching/energy-collector.git ~/energy-collector
 gcloud functions deploy collect-forecasts --gen2 --region="${REGION}" --runtime=python312 \
   --source="${HOME}/energy-collector/cloud_function/collect-forecasts" --entry-point=collect_http \
   --trigger-http --no-allow-unauthenticated --service-account="${COLLECTOR_SA}" \
-  --set-env-vars="COLLECTOR_BUCKET=${BUCKET},ACTUALS_BUCKET=${ACTUALS_BUCKET}" --memory=1Gi --timeout=540 --quiet \
+  --set-env-vars="COLLECTOR_BUCKET=${BUCKET},ACTUALS_BUCKET=${ACTUALS_BUCKET},PUBLIC_BUCKET=${PUBLIC_BUCKET}" --memory=1Gi --timeout=540 --quiet \
   && echo "✅ 5. collect-forecasts deployed"
 
 # 6. Run it every hour at :35 (students' forecast-24h runs at :20)
@@ -67,3 +79,4 @@ echo
 echo "Students share their bucket with:  ${COLLECTOR_SA}"
 echo "Run it now:  gcloud scheduler jobs run collect-forecasts-hourly --location=${REGION}"
 echo "See who is in: gcloud storage cat gs://${BUCKET}/class/status_latest.csv"
+echo "Student leaderboard: https://storage.googleapis.com/${PUBLIC_BUCKET}/index.html"

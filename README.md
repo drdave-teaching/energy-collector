@@ -26,7 +26,7 @@ Nov 10 still shows every forecast since their Lab 5 night. If a student stops sh
 
 ## In class: students share, you add them to the roster
 Each student runs **Lab 5 Part 7e** (one cell). It grants your collector read access to their bucket and prints one line,
-`netid,bucket`, which they paste into the **Submit Lab 5** text box (or the Teams chat). Then, in Cloud Shell:
+`netid,bucket,nickname`, which they paste into the **Submit Lab 5** text box. Then, in Cloud Shell:
 
 ```bash
 BUCKET=opim5512-collector-f26
@@ -71,6 +71,12 @@ England's own forecast (the newest version published before each forecast).
 - Actual load = live Connecticut five-minute load averaged per hour (provisional), read from `ACTUALS_BUCKET`.
 - Forecasts are frozen when collected: a later edit in a student's bucket changes nothing.
 - `class/leaderboard_by_lead.csv` = error by hours ahead; `class/scored_forecasts.csv` = every scored forecast hour.
+
+## The student page
+Every hour the collector also writes **https://storage.googleapis.com/opim5512-leaderboard-f26/index.html**: the ranked
+table, the two baselines, skill by hours ahead and how it's scored. It shows **nicknames only** (the roster's third
+column; a blank nickname shows as "Forecaster 07", their roster position). NetIDs, buckets and forecasts stay private.
+To rename someone, edit their nickname in the roster. Link it from HuskyCT.
 
 ## Cost and stopping
 One function run per hour reading about 30 small CSVs: well under $1 a month. To pause:
