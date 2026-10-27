@@ -152,6 +152,15 @@ def score_forecasts(master, actual, isone):
     source = source.where(~too_new, source - pd.Timedelta(hours=24))
     pairs["same_hour_yesterday_mw"] = actual.reindex(source).values
 
+    # Baseline: same hour one week ago (always over: 168 hours back is older than any 24-hour forecast)
+    pairs["same_hour_last_week_mw"] = actual.reindex(pairs["target"] - pd.Timedelta(hours=168)).values
+
+    # Baseline: average of the last 6 hours that were over when the forecast was made, the same for all 24 hours ahead
+    hourly = actual[~actual.index.duplicated(keep="last")].asfreq("h")
+    six_hour = hourly.rolling(6, min_periods=4).mean()
+    last_over = pairs["issued"].dt.floor("h") - pd.Timedelta(hours=1)
+    pairs["six_hour_avg_mw"] = six_hour.reindex(last_over).values
+
     # ISO-NE's own forecast: the newest version published before the student's forecast
     pairs["isone_forecast_mw"] = np.nan
     if isone is not None:
@@ -166,6 +175,8 @@ def score_forecasts(master, actual, isone):
     pairs["pct_error"] = 100 * pairs["abs_error_mw"] / pairs["actual_mw"]
     pairs["baseline_abs_error_mw"] = (pairs["same_hour_yesterday_mw"] - pairs["actual_mw"]).abs()
     pairs["isone_abs_error_mw"] = (pairs["isone_forecast_mw"] - pairs["actual_mw"]).abs()
+    pairs["last_week_abs_error_mw"] = (pairs["same_hour_last_week_mw"] - pairs["actual_mw"]).abs()
+    pairs["six_hour_avg_abs_error_mw"] = (pairs["six_hour_avg_mw"] - pairs["actual_mw"]).abs()
 
     pairs["score"] = pairs["abs_error_mw"]
     pairs["inside_range"] = np.nan
@@ -237,6 +248,14 @@ def build_leaderboard(client, mine, master):
     common = common.assign(inside_range=np.nan, range_width_mw=np.nan)      # baselines give no range
     baseline = common.assign(baseline_score=common["baseline_abs_error_mw"])
     rows.append(leaderboard_row("BASELINE: same hour yesterday", baseline, "baseline_score", "same_hour_yesterday_mw"))
+    last_week = common[common["same_hour_last_week_mw"].notna()]
+    if len(last_week) > 0:
+        rows.append(leaderboard_row("BASELINE: same hour last week", last_week, "last_week_abs_error_mw",
+                                    "same_hour_last_week_mw"))
+    six_hour = common[common["six_hour_avg_mw"].notna()]
+    if len(six_hour) > 0:
+        rows.append(leaderboard_row("BASELINE: average of the last 6 hours", six_hour, "six_hour_avg_abs_error_mw",
+                                    "six_hour_avg_mw"))
     iso = common[common["isone_forecast_mw"].notna()]
     if len(iso) > 0:
         rows.append(leaderboard_row("BASELINE: ISO New England's forecast", iso, "isone_abs_error_mw", "isone_forecast_mw"))

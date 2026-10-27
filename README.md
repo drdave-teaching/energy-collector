@@ -65,8 +65,9 @@ range only helps when it is narrow **and** honest.
 
 **Rank = skill %**: 1 − score ÷ (error of "same hour yesterday"), worked out separately for 1–6, 7–12, 13–18 and 19–24
 hours ahead and averaged, so the hard far-ahead hours count as much as the easy ones. Everyone is compared on the
-exact hours they forecast, so joining late is no penalty. Two baseline rows: same hour yesterday (skill 0) and ISO New
-England's own forecast (the newest version published before each forecast).
+exact hours they forecast, so joining late is no penalty. Four baseline rows: same hour yesterday (skill 0), same hour
+last week, the average of the last 6 hours that were over (held flat for all 24 hours), and ISO New England's own
+forecast (the newest version published before each forecast).
 
 - Actual load = live Connecticut five-minute load averaged per hour (provisional), read from `ACTUALS_BUCKET`.
 - Forecasts are frozen when collected: a later edit in a student's bucket changes nothing.

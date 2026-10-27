@@ -142,6 +142,7 @@ def render(board, by_lead, roster, waiting, now=None):
                  "<td>" + number(row["mae_lead_13_18"]) + "</td>", "<td>" + number(row["mae_lead_19_24"]) + "</td>",
                  "<td>" + beat_iso + "</td>"]
         if has_range:
+            cells.append("<td>" + number(row["score"], 1) + "</td>")
             cells.append("<td>" + number(row["range_coverage_pct"], 0, "%") + "</td>")
             cells.append("<td>" + number(row["range_width_mw"]) + "</td>")
         cells.append("<td>" + number(row["hours_scored"]) + "</td>")
@@ -149,7 +150,7 @@ def render(board, by_lead, roster, waiting, now=None):
 
     range_heads = ""
     if has_range:
-        range_heads = '<th title="Share of hours the actual load fell between your low and high">Inside range</th><th>Range width (MW)</th>'
+        range_heads = '<th title="Average score per forecast hour, lower is better. With no range it equals Avg miss">Score</th>' +             '<th title="Share of hours the actual load fell between your low and high">Inside range</th><th>Range width (MW)</th>'
     chart_svg, chart_legend = skill_chart(by_lead, board, names)
     waiting_note = ""
     if waiting > 0:
@@ -211,10 +212,29 @@ ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 <li>Every hour your model forecasts the next 24 hours. Each forecast hour is scored once Connecticut's actual load for that hour is in.</li>
 <li><b>Avg miss</b> = average |actual &minus; your expected value|, in MW. The four columns split it by how far ahead you forecast.</li>
 <li><b>Skill</b> = how much smaller your miss is than "same hour yesterday" on the exact hours you forecast, worked out for 1&ndash;6, 7&ndash;12, 13&ndash;18 and 19&ndash;24 hours ahead and averaged. Rank is by skill, so joining late is no penalty.</li>
-<li>When you give a low and high value too (Lab 6 and the final project), your score also rewards a range that is narrow and still holds the actual load.</li>
-<li>ISO New England's row is the grid operator's own forecast, the newest version published before each of yours.</li>
+<li>The grey rows are simple forecasts to beat: <b>same hour yesterday</b> (the 0% line for skill), <b>same hour last week</b>, the <b>average of the last 6 hours</b> held flat for all 24 hours, and <b>ISO New England</b>, the grid operator's own forecast (the newest version published before each of yours).</li>
 <li>Actual load is ISO New England's live five-minute estimate for Connecticut, averaged per hour, so it can still shift a little.</li>
 </ul></div>
+
+<div class="card"><h2>Scoring a range: low, expected and high (Lab 6 and the final project)</h2>
+<p style="margin:0 0 8px">Your low and high are your 10th and 90th percentiles: about 8 hours in 10 should land between them. Every forecast hour gets one score, in MW, lower is better:</p>
+<p style="margin:0 0 8px;text-align:center"><b>score = ( 0.5 &times; |actual &minus; expected| + 0.1 &times; width + 1 &times; outside ) &divide; 1.5</b></p>
+<ul style="margin-bottom:10px">
+<li><b>width</b> = high &minus; low. <b>outside</b> = how many MW the actual fell outside your range (0 when it lands inside).</li>
+<li>A MW outside costs <b>10 times</b> a MW of width. Wide is safe but adds up; too narrow is cheap until the actual gets out.</li>
+<li>With no range (low = expected = high) the score is exactly your Avg miss, |actual &minus; expected|, the Lab 5 score. So everyone ranks on one scale.</li>
+</ul>
+<p style="margin:0 0 6px">One hour, actual load 3,100 MW. All four expected 3,000 MW, so all four missed by 100 MW:</p>
+<div class="scroll"><table style="min-width:640px">
+<thead><tr><th style="text-align:left">Forecaster</th><th>Low</th><th>High</th><th>Width</th><th>Outside</th><th>Score</th></tr></thead>
+<tbody>
+<tr><td class="name">No range (Lab 5)</td><td>3,000</td><td>3,000</td><td>0</td><td>100</td><td>(50 + 0 + 100) &divide; 1.5 = <b>100.0</b></td></tr>
+<tr><td class="name">Too narrow</td><td>2,980</td><td>3,020</td><td>40</td><td>80</td><td>(50 + 4 + 80) &divide; 1.5 = <b>89.3</b></td></tr>
+<tr class="top"><td class="name">Honest</td><td>2,850</td><td>3,200</td><td>350</td><td>0</td><td>(50 + 35 + 0) &divide; 1.5 = <b>56.7</b></td></tr>
+<tr><td class="name">Too wide</td><td>2,000</td><td>4,000</td><td>2,000</td><td>0</td><td>(50 + 200 + 0) &divide; 1.5 = <b>166.7</b></td></tr>
+</tbody></table></div>
+<p class="note">Over many hours the lowest score goes to the range that holds about 80% of actual loads, no more, no less: honesty is the winning strategy. Watch your <b>Inside range</b> column: well under 80% means widen, well over means narrow. This is the weighted interval score used in forecasting competitions.</p>
+</div>
 <p class="note">Data: ISO New England (ISO Express), National Weather Service, Iowa State Mesonet. This page refreshes itself every 10 minutes.</p>
 </main></body></html>
 """
