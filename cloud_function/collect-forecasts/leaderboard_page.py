@@ -209,7 +209,7 @@ def live_chart(live, names):
 
     past = live.get("past_by_student")
     values = []
-    for key in ["actual", "past_median", "future", "isone"]:
+    for key in ["actual", "past_median", "future", "isone", "baseline_yesterday", "baseline_last_week", "baseline_six_hour"]:
         if live.get(key) is not None:
             values.extend([float(v) for v in live[key].dropna()])
     if past is not None and past.shape[1] > 0:
@@ -279,6 +279,13 @@ def live_chart(live, names):
         color = "#d62828" if live.get("future_label", "").startswith("Class") else "var(--gold)"
         parts.append(draw(live["future"], x, y, color, 2.6, ' stroke-dasharray="7 4"'))
         legend.append('<span class="key"><i style="background:' + color + '"></i>' + html.escape(live.get("future_label", "")) + " (dashed)</span>")
+    baselines = [("baseline_yesterday", "Same hour yesterday", "#7b2cbf", ' stroke-dasharray="2 3"'),
+                 ("baseline_last_week", "Same hour last week", "#2a9d8f", ' stroke-dasharray="2 3"'),
+                 ("baseline_six_hour", "Average of the last 6 hours", "#8d6e63", ' stroke-dasharray="2 3"')]
+    for key, label, color, dash in baselines:
+        if live.get(key) is not None and live[key].notna().any():
+            parts.append(draw(live[key], x, y, color, 1.8, dash, tooltip="Baseline: " + label))
+            legend.append('<span class="key"><i style="background:' + color + '"></i>Baseline: ' + label + " (dotted)</span>")
     if live.get("actual") is not None and len(live["actual"]) > 0:
         parts.append(draw(live["actual"], x, y, "var(--ink)", 3))
         legend.append('<span class="key"><i style="background:var(--ink)"></i>Actual load</span>')

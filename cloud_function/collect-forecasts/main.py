@@ -328,6 +328,17 @@ def build_live_chart(client, master, board, roster, now):
     actual = load_actuals(client)
     if actual is not None:
         live["actual"] = actual[(actual.index >= start) & (actual.index <= hour_now)]
+        # The simple baselines for the next 24 hours, built only from load that is already over (as the leaderboard scores them)
+        hourly = actual[~actual.index.duplicated(keep="last")]
+        over = hourly[hourly.index + pd.Timedelta(hours=1) <= pd.Timestamp(now)]
+        targets = pd.date_range(hour_now + pd.Timedelta(hours=1), end, freq="h")
+        yesterday_source = targets - pd.Timedelta(hours=24)
+        not_over = yesterday_source + pd.Timedelta(hours=1) > pd.Timestamp(now)
+        yesterday_source = yesterday_source.where(~not_over, yesterday_source - pd.Timedelta(hours=24))
+        live["baseline_yesterday"] = pd.Series(over.reindex(yesterday_source).values, index=targets)
+        live["baseline_last_week"] = pd.Series(over.reindex(targets - pd.Timedelta(hours=168)).values, index=targets)
+        if len(over) >= 4:
+            live["baseline_six_hour"] = pd.Series(float(over.tail(6).mean()), index=targets)
 
     table = master[master["predicted_load_mw"].notna()].copy()
     table = table[seen_in_time(table)]
