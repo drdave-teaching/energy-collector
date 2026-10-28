@@ -36,6 +36,10 @@ STUDENT_MASTER_KEY = "energy/datasets/forecasts_master.csv"
 STUDENT_CARD_KEY = "energy/models/model_card.json"
 ACTUAL_LOAD_KEY = "energy/datasets/ct_load_5min_hourly_master.csv"     # live CT load, five-minute values averaged per hour
 ISONE_FORECAST_KEY = "energy/datasets/isone_ct_forecast_master.csv"     # ISO New England's own CT forecast, every version
+WEATHER_FORECAST_KEY = "energy/datasets/bdl_weather_forecast_master.csv"  # NWS forecast for Bradley Airport, every hour
+WEATHER_OBS_KEY = "energy/datasets/bdl_weather_obs_master.csv"          # what the weather at Bradley actually was
+MEDIAN_MIN_FORECASTERS = 3    # the live chart shows the class median for the next 24 hours only once 3+ students forecast
+INSTRUCTOR_NICKNAME = "dr. dave"   # roster nicknames starting with this are Dr. Dave's practice models, not students
 STALE_HOURS = 2          # newest forecast older than this = "stale" (their forecast-24h stopped)
 LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead times counts the same in the skill score
 INTERVAL_ALPHA = 0.2     # low/high are an 80% range: the 10th and 90th percentiles
@@ -273,6 +277,99 @@ def build_leaderboard(client, mine, master):
     return board, by_lead.reset_index()
 
 
+# ----------------------------------------------------------------------------------------------------------------
+# Live chart for the student page: the last 24 hours and the next 24.
+#   Past hours: actual load, ISO New England, and every forecaster's latest call for that hour (made before it began),
+#   shown only once the hour is over, so nobody can copy a forecast. Red = class median, blue = #1 on the leaderboard.
+#   Next 24 hours: the class median of everyone's newest forecast (3+ students), or else Dr. Dave's practice model,
+#   plus ISO New England and the National Weather Service forecast for Bradley Airport.
+# ----------------------------------------------------------------------------------------------------------------
+def instructor_netids(roster):
+    found = []
+    for i in range(len(roster)):
+        nickname = str(roster["nickname"].iloc[i]).strip().lower() if "nickname" in roster.columns else ""
+        if nickname.startswith(INSTRUCTOR_NICKNAME):
+            found.append(roster["netid"].iloc[i])
+    return found
+
+
+def build_live_chart(client, master, board, roster, now):
+    hour_now = pd.Timestamp(now).floor("h")
+    start = hour_now - pd.Timedelta(hours=24)
+    end = hour_now + pd.Timedelta(hours=24)
+    live = {"start": start, "now": pd.Timestamp(now), "end": end}
+    instructors = instructor_netids(roster)
+
+    actual = load_actuals(client)
+    if actual is not None:
+        live["actual"] = actual[(actual.index >= start) & (actual.index <= hour_now)]
+
+    table = master[["netid", "issued_at_utc", "target_hour_utc", "predicted_load_mw"]].copy()
+    table["issued"] = pd.to_datetime(table["issued_at_utc"], utc=True)
+    table["target"] = pd.to_datetime(table["target_hour_utc"], utc=True)
+    table = table[(table["issued"] < table["target"]) & table["predicted_load_mw"].notna()]
+
+    # Past: each forecaster's newest forecast for each hour that is already over
+    hour_over = table["target"] + pd.Timedelta(hours=1) <= pd.Timestamp(now)
+    past = table[hour_over & (table["target"] >= start)].sort_values("issued")
+    past = past.groupby(["target", "netid"])["predicted_load_mw"].last().unstack("netid")
+    live["past_by_student"] = past
+    if past.shape[1] > 0:
+        live["past_median"] = past.median(axis=1)
+
+    # #1 on the leaderboard: a student if there is one, else Dr. Dave's practice model
+    ranked = board[~board["netid"].str.startswith("BASELINE")]["netid"].tolist()
+    top = None
+    for netid in ranked:
+        if netid not in instructors:
+            top = netid
+            break
+    if top is None and len(ranked) > 0:
+        top = ranked[0]
+    live["top_netid"] = top
+
+    # Next 24 hours: the class median of everyone's newest forecast, never a single student's
+    newest_issue = table.groupby("netid")["issued"].transform("max")
+    upcoming = table[(table["issued"] == newest_issue) & ~hour_over & (table["target"] <= end)]
+    future = upcoming.pivot_table(index="target", columns="netid", values="predicted_load_mw")
+    students = []
+    for netid in future.columns:
+        if netid not in instructors:
+            students.append(netid)
+    if len(students) >= MEDIAN_MIN_FORECASTERS:
+        live["future"] = future[students].median(axis=1)
+        live["future_label"] = "Class median, next 24 hours (" + str(len(students)) + " forecasters)"
+    else:
+        for netid in instructors:
+            if netid in future.columns:
+                live["future"] = future[netid]
+                live["future_label"] = "Dr. Dave's practice model, next 24 hours"
+                break
+
+    # ISO New England: for each hour, the newest version published before that hour (and before now)
+    isone = load_isone(client)
+    if isone is not None:
+        iso = isone[(isone["issued_at_utc"] <= pd.Timestamp(now)) & (isone["issued_at_utc"] < isone["target_hour_utc"])]
+        iso = iso[(iso["target_hour_utc"] >= start) & (iso["target_hour_utc"] <= end)]
+        live["isone"] = iso.groupby("target_hour_utc")["isone_forecast_mw"].last()
+
+    # Weather at Bradley: what it was (past) and the newest NWS forecast (next 24 hours)
+    weather_bucket = client.bucket(ACTUALS_BUCKET)
+    obs = read_csv(weather_bucket, WEATHER_OBS_KEY)
+    if obs is not None and len(obs) > 0:
+        obs["hour_utc"] = pd.to_datetime(obs["hour_utc"], utc=True)
+        obs = obs[(obs["hour_utc"] >= start) & (obs["hour_utc"] <= hour_now)]
+        live["weather_obs"] = obs.set_index("hour_utc").sort_index()
+    forecast = read_csv(weather_bucket, WEATHER_FORECAST_KEY)
+    if forecast is not None and len(forecast) > 0:
+        forecast["scraped_hour_utc"] = pd.to_datetime(forecast["scraped_hour_utc"], utc=True)
+        forecast["target_hour_utc"] = pd.to_datetime(forecast["target_hour_utc"], utc=True)
+        newest = forecast[forecast["scraped_hour_utc"] == forecast["scraped_hour_utc"].max()]
+        newest = newest[(newest["target_hour_utc"] >= hour_now) & (newest["target_hour_utc"] <= end)]
+        live["weather_forecast"] = newest.set_index("target_hour_utc").sort_index()
+    return live
+
+
 def run_once():
     now = datetime.now(timezone.utc)
     client = storage.Client()
@@ -339,7 +436,12 @@ def run_once():
                 leaderboard_rows = int(len(board))
                 if PUBLIC_BUCKET:
                     waiting = int((~roster["netid"].isin(board["netid"])).sum())
-                    page = leaderboard_page.render(board, by_lead, roster, waiting)
+                    live = None
+                    try:                      # a chart problem never stops the page
+                        live = build_live_chart(client, master, board, roster, now)
+                    except Exception as err:
+                        logging.error("Live chart: %s\n%s", err, traceback.format_exc())
+                    page = leaderboard_page.render(board, by_lead, roster, waiting, live=live)
                     blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
                     blob.cache_control = "public, max-age=60"
                     blob.upload_from_string(page, content_type="text/html; charset=utf-8")

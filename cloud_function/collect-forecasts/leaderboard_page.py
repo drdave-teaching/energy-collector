@@ -110,7 +110,201 @@ def skill_chart(by_lead, board, names):
     return "".join(parts), "".join(legend)
 
 
-def render(board, by_lead, roster, waiting, now=None):
+def local_hour_label(stamp):
+    local = stamp.tz_convert(EASTERN)
+    hour = local.hour % 12
+    if hour == 0:
+        hour = 12
+    label = str(hour) + (" AM" if local.hour < 12 else " PM")
+    if local.hour == 0:
+        label = local.strftime("%a ") + label
+    return label
+
+
+def sky_words(cloud_pct):
+    if cloud_pct < 25:
+        return "mostly clear"
+    if cloud_pct < 60:
+        return "partly cloudy"
+    if cloud_pct < 85:
+        return "mostly cloudy"
+    return "overcast"
+
+
+def weather_summary(live):
+    """One sentence about the next 24 hours at Bradley Airport, from the newest National Weather Service forecast."""
+    fc = live.get("weather_forecast")
+    if fc is None or len(fc) == 0 or "temp_f" not in fc.columns:
+        return ""
+    parts = ["high " + format(fc["temp_f"].max(), ".0f") + "&deg;F", "low " + format(fc["temp_f"].min(), ".0f") + "&deg;F"]
+    if "cloud_cover_pct" in fc.columns and fc["cloud_cover_pct"].notna().any():
+        parts.append(sky_words(float(fc["cloud_cover_pct"].mean())))
+    if "precip_chance_pct" in fc.columns and fc["precip_chance_pct"].notna().any():
+        parts.append("rain chance up to " + format(fc["precip_chance_pct"].max(), ".0f") + "%")
+    if "wind_speed_mph" in fc.columns and fc["wind_speed_mph"].notna().any():
+        wind = "wind up to " + format(fc["wind_speed_mph"].max(), ".0f") + " mph"
+        if "wind_gust_mph" in fc.columns and fc["wind_gust_mph"].notna().any():
+            wind = wind + ", gusts " + format(fc["wind_gust_mph"].max(), ".0f")
+        parts.append(wind)
+    return "<b>Next 24 hours at Bradley Airport</b> (National Weather Service): " + ", ".join(parts) + "."
+
+
+def series_points(series, x, y):
+    """SVG polyline point lists for one time series, split wherever an hour is missing."""
+    runs = []
+    points = []
+    previous = None
+    for stamp, value in series.sort_index().items():
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            continue
+        if previous is not None and stamp - previous > pd.Timedelta(hours=1) and len(points) > 0:
+            runs.append(points)
+            points = []
+        points.append(format(x(stamp), ".1f") + "," + format(y(float(value)), ".1f"))
+        previous = stamp
+    if len(points) > 0:
+        runs.append(points)
+    return runs
+
+
+def draw(series, x, y, color, width, extra=""):
+    parts = []
+    for points in series_points(series, x, y):
+        if len(points) == 1:
+            xy = points[0].split(",")
+            parts.append('<circle cx="' + xy[0] + '" cy="' + xy[1] + '" r="' + str(width + 1) + '" fill="' + color + '"/>')
+        else:
+            parts.append('<polyline fill="none" stroke="' + color + '" stroke-width="' + str(width) + '"' + extra
+                         + ' stroke-linejoin="round" points="' + " ".join(points) + '"/>')
+    return "".join(parts)
+
+
+def live_chart(live, names):
+    """SVG: load for the last 24 hours and the next 24, with the weather at Bradley underneath."""
+    width, left, right = 760, 56, 44
+    load_top, load_h = 18, 230
+    wx_top, wx_h = load_top + load_h + 30, 90
+    height = wx_top + wx_h + 28
+    plot_w = width - left - right
+    start, end, now = live["start"], live["end"], live["now"]
+    span = (end - start) / pd.Timedelta(hours=1)
+
+    def x(stamp):
+        return left + ((stamp - start) / pd.Timedelta(hours=1)) / span * plot_w
+
+    past = live.get("past_by_student")
+    values = []
+    for key in ["actual", "past_median", "future", "isone"]:
+        if live.get(key) is not None:
+            values.extend([float(v) for v in live[key].dropna()])
+    if past is not None and past.shape[1] > 0:
+        values.extend([float(v) for v in past.stack().dropna()])
+    if len(values) == 0:
+        return "", ""
+    low = np.floor((min(values) - 50) / 250) * 250
+    high = np.ceil((max(values) + 50) / 250) * 250
+    step = 250 if high - low <= 1500 else 500
+
+    def y(value):
+        return load_top + (high - min(max(value, low), high)) / (high - low) * load_h
+
+    parts = ['<svg viewBox="0 0 ' + str(width) + " " + str(height) + '" role="img" aria-label="Load for the last 24 hours and the next 24">']
+    parts.append('<rect x="' + format(x(now), ".1f") + '" y="' + str(load_top) + '" width="' + format(x(end) - x(now), ".1f")
+                 + '" height="' + str(wx_top + wx_h - load_top) + '" class="future"/>')
+    tick = low
+    while tick <= high:
+        parts.append('<line x1="' + str(left) + '" x2="' + str(width - right) + '" y1="' + format(y(tick), ".1f") + '" y2="'
+                     + format(y(tick), ".1f") + '" class="grid"/>')
+        parts.append('<text x="' + str(left - 8) + '" y="' + format(y(tick) + 4, ".1f") + '" class="axis" text-anchor="end">'
+                     + format(tick, ",.0f") + "</text>")
+        tick += step
+    middle = format(load_top + load_h / 2, ".1f")
+    parts.append('<text x="12" y="' + middle + '" class="axis" text-anchor="middle" transform="rotate(-90 12 ' + middle + ')">MW</text>')
+
+    legend = []
+    top = live.get("top_netid")
+    if past is not None and past.shape[1] > 0:
+        for netid in past.columns:
+            if netid != top:
+                parts.append(draw(past[netid], x, y, "var(--student)", 1.2))
+        legend.append('<span class="key"><i style="background:var(--student)"></i>Each forecaster (shown once the hour is over)</span>')
+    if live.get("isone") is not None and len(live["isone"]) > 0:
+        parts.append(draw(live["isone"], x, y, "var(--muted)", 1.8, ' stroke-dasharray="5 4"'))
+        legend.append('<span class="key"><i style="background:var(--muted)"></i>ISO New England (dashed)</span>')
+    if past is not None and top in past.columns:
+        parts.append(draw(past[top], x, y, "#1f6feb", 2.6))
+        legend.append('<span class="key"><i style="background:#1f6feb"></i>#1 on the leaderboard: ' + html.escape(names.get(top, "Forecaster")) + "</span>")
+    if live.get("past_median") is not None and past is not None and past.shape[1] >= 2:
+        parts.append(draw(live["past_median"], x, y, "#d62828", 2.6))
+        legend.append('<span class="key"><i style="background:#d62828"></i>Class median</span>')
+    if live.get("future") is not None and len(live["future"]) > 0:
+        color = "#d62828" if live.get("future_label", "").startswith("Class") else "var(--gold)"
+        parts.append(draw(live["future"], x, y, color, 2.6, ' stroke-dasharray="7 4"'))
+        legend.append('<span class="key"><i style="background:' + color + '"></i>' + html.escape(live.get("future_label", "")) + " (dashed)</span>")
+    if live.get("actual") is not None and len(live["actual"]) > 0:
+        parts.append(draw(live["actual"], x, y, "var(--ink)", 3))
+        legend.append('<span class="key"><i style="background:var(--ink)"></i>Actual load</span>')
+
+    # Weather panel: temperature (line) and chance of rain (bars)
+    temps = []
+    obs = live.get("weather_obs")
+    fc = live.get("weather_forecast")
+    if obs is not None and "temp_f" in obs.columns:
+        temps.extend([float(v) for v in obs["temp_f"].dropna()])
+    if fc is not None and "temp_f" in fc.columns:
+        temps.extend([float(v) for v in fc["temp_f"].dropna()])
+    if len(temps) > 0:
+        t_low = np.floor((min(temps) - 2) / 10) * 10
+        t_high = np.ceil((max(temps) + 2) / 10) * 10
+
+        def ty(value):
+            return wx_top + (t_high - min(max(value, t_low), t_high)) / (t_high - t_low) * wx_h
+
+        parts.append('<line x1="' + str(left) + '" x2="' + str(width - right) + '" y1="' + str(wx_top + wx_h) + '" y2="'
+                     + str(wx_top + wx_h) + '" class="grid"/>')
+        for t in [t_low, t_high]:
+            parts.append('<text x="' + str(left - 8) + '" y="' + format(ty(t) + 4, ".1f") + '" class="axis" text-anchor="end">'
+                         + format(t, ".0f") + "&deg;F</text>")
+        has_rain = fc is not None and "precip_chance_pct" in fc.columns and fc["precip_chance_pct"].notna().any()
+        if has_rain:
+            bar_w = max(plot_w / span - 2, 2)
+            for stamp, chance in fc["precip_chance_pct"].dropna().items():
+                if chance > 0:
+                    bar_h = chance / 100 * wx_h
+                    parts.append('<rect x="' + format(x(stamp) - bar_w / 2, ".1f") + '" y="' + format(wx_top + wx_h - bar_h, ".1f")
+                                 + '" width="' + format(bar_w, ".1f") + '" height="' + format(bar_h, ".1f") + '" class="rain"/>')
+            parts.append('<text x="' + str(width - right + 6) + '" y="' + str(wx_top + 10) + '" class="axis">100%</text>')
+            parts.append('<text x="' + str(width - right + 6) + '" y="' + str(wx_top + wx_h) + '" class="axis">0%</text>')
+        if obs is not None and "temp_f" in obs.columns:
+            parts.append(draw(obs["temp_f"], x, ty, "#e67e22", 2.2))
+        if fc is not None and "temp_f" in fc.columns:
+            parts.append(draw(fc["temp_f"], x, ty, "#e67e22", 2.2, ' stroke-dasharray="5 4"'))
+            for stamp, temp in fc["temp_f"].dropna().items():
+                if stamp.tz_convert(EASTERN).hour % 6 == 0:
+                    parts.append('<text x="' + format(x(stamp), ".1f") + '" y="' + format(ty(temp) - 7, ".1f")
+                                 + '" class="axis" text-anchor="middle">' + format(temp, ".0f") + "&deg;</text>")
+        legend.append('<span class="key"><i style="background:#e67e22"></i>Temperature at Bradley (solid = measured, dashed = forecast)</span>')
+        if has_rain:
+            legend.append('<span class="key"><i style="background:var(--rain)"></i>Chance of rain (bars, right scale)</span>')
+
+    # Time axis and the "now" line
+    stamp = start
+    while stamp <= end:
+        if stamp.tz_convert(EASTERN).hour % 6 == 0:
+            parts.append('<line x1="' + format(x(stamp), ".1f") + '" x2="' + format(x(stamp), ".1f") + '" y1="' + str(load_top)
+                         + '" y2="' + str(wx_top + wx_h) + '" class="grid"/>')
+            parts.append('<text x="' + format(x(stamp), ".1f") + '" y="' + str(height - 8) + '" class="axis" text-anchor="middle">'
+                         + local_hour_label(stamp) + "</text>")
+        stamp += pd.Timedelta(hours=1)
+    parts.append('<line x1="' + format(x(now), ".1f") + '" x2="' + format(x(now), ".1f") + '" y1="' + str(load_top - 6) + '" y2="'
+                 + str(wx_top + wx_h) + '" class="now"/>')
+    parts.append('<text x="' + format(x(now) - 6, ".1f") + '" y="' + str(load_top - 6) + '" class="axis" text-anchor="end">&larr; what happened</text>')
+    parts.append('<text x="' + format(x(now) + 6, ".1f") + '" y="' + str(load_top - 6) + '" class="axis">what&rsquo;s next &rarr;</text>')
+    parts.append("</svg>")
+    return "".join(parts), "".join(legend)
+
+
+def render(board, by_lead, roster, waiting, now=None, live=None):
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     has_range = board["range_coverage_pct"].notna().any()
@@ -152,6 +346,15 @@ def render(board, by_lead, roster, waiting, now=None):
     if has_range:
         range_heads = '<th title="Average score per forecast hour, lower is better. With no range it equals Avg miss">Score</th>' +             '<th title="Share of hours the actual load fell between your low and high">Inside range</th><th>Range width (MW)</th>'
     chart_svg, chart_legend = skill_chart(by_lead, board, names)
+    live_card = ""
+    if live is not None:
+        live_svg, live_legend = live_chart(live, names)
+        if live_svg:
+            live_card = """<div class="card"><h2>The last 24 hours and the next 24</h2>
+<p class="note" style="margin-top:0">""" + weather_summary(live) + """</p>
+""" + live_svg + '<div class="legend">' + live_legend + """</div>
+<p class="note">Gray lines are each forecaster's latest call for an hour, made before it began. They appear only after the hour is over, so nobody can copy a forecast. The next 24 hours show only the class median, never one person's forecast.</p></div>
+"""
     waiting_note = ""
     if waiting > 0:
         waiting_note = "<p class=\"note\">" + str(waiting) + " more forecaster" + ("s are" if waiting > 1 else " is") + \
@@ -163,9 +366,10 @@ def render(board, by_lead, roster, waiting, now=None):
 <title>Load Forecast Leaderboard</title>
 <style>
 :root { --bg:#f6f7fb; --card:#ffffff; --ink:#1c1c1e; --muted:#6b7280; --line:#e3e6ee; --navy:#0A1F44; --gold:#F2A900;
-        --baseline:#f1f3f8; --top:#fff6dc; }
+        --baseline:#f1f3f8; --top:#fff6dc; --student:#b9c0cc; --rain:#9cc3ef; --future-bg:#f3f6fc; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0d1220; --card:#161d2f; --ink:#e8eaf0;
-        --muted:#9aa3b5; --line:#2a3350; --navy:#9db8ff; --baseline:#1d2539; --top:#3a3214; } }
+        --muted:#9aa3b5; --line:#2a3350; --navy:#9db8ff; --baseline:#1d2539; --top:#3a3214; --student:#4a5470;
+        --rain:#2f5d8f; --future-bg:#1a2236; } }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; }
 main { max-width:1040px; margin:0 auto; padding:28px 16px 48px; }
@@ -188,6 +392,8 @@ h2 { font-size:17px; margin:0 0 6px; color:var(--navy); }
 svg { width:100%; height:auto; }
 svg .grid { stroke:var(--line); } svg .zero { stroke:var(--muted); stroke-width:1.5; }
 svg .axis { fill:var(--muted); font-size:12px; }
+svg .future { fill:var(--future-bg); } svg .now { stroke:var(--ink); stroke-width:1.5; stroke-dasharray:3 3; }
+svg .rain { fill:var(--rain); opacity:.7; }
 .legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:6px; font-size:13px; }
 .key i { display:inline-block; width:14px; height:4px; border-radius:2px; margin-right:6px; vertical-align:middle; }
 ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
@@ -204,7 +410,7 @@ ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
         range_heads + """<th>Hours scored</th></tr></thead>
 <tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
 
-<div class="card"><h2>Skill by hours ahead</h2>
+""" + live_card + """<div class="card"><h2>Skill by hours ahead</h2>
 <p class="note" style="margin-top:0">Above 0% = better than "same hour yesterday" at that many hours ahead. Far-ahead hours are harder, so they count as much as next-hour ones.</p>
 """ + chart_svg + '<div class="legend">' + chart_legend + """</div></div>
 
