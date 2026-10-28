@@ -251,8 +251,9 @@ def build_leaderboard(client, mine, master, cards=None):
         row["test_mape_pct"] = np.nan
         if cards is not None and netid in cards:
             for key in ["test_mae_mw", "test_mape_pct"]:
+                value = cards[netid].get(key, cards[netid].get(key + "_2026"))    # the starter script adds "_2026"
                 try:
-                    row[key] = round(float(cards[netid].get(key)), 2)
+                    row[key] = round(float(value), 2)
                 except (TypeError, ValueError):
                     pass
         rows.append(row)
