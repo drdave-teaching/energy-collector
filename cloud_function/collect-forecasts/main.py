@@ -234,7 +234,7 @@ def leaderboard_row(name, rows, score_column, prediction_column):
     return row
 
 
-def build_leaderboard(client, mine, master):
+def build_leaderboard(client, mine, master, cards=None):
     actual = load_actuals(client)
     if actual is None:
         return None, None
@@ -245,6 +245,16 @@ def build_leaderboard(client, mine, master):
     for netid, group in pairs.groupby("netid"):
         row = leaderboard_row(netid, group, "score", "predicted_load_mw")
         row["model_version"] = str(group["model_version"].iloc[-1])
+        # The student's own test-year score from their model card (Lab 5 Part 7a): 2026 so far, with the weather that
+        # actually happened. Live error is usually higher, because production only has the weather FORECAST.
+        row["test_mae_mw"] = np.nan
+        row["test_mape_pct"] = np.nan
+        if cards is not None and netid in cards:
+            for key in ["test_mae_mw", "test_mape_pct"]:
+                try:
+                    row[key] = round(float(cards[netid].get(key)), 2)
+                except (TypeError, ValueError):
+                    pass
         rows.append(row)
 
     # Baselines, scored on every hour any student forecast (one copy per issue hour and target hour)
@@ -383,6 +393,7 @@ def run_once():
 
     statuses = []
     cards = []
+    card_by_netid = {}
     for i in range(len(roster)):
         netid = roster["netid"].iloc[i]
         bucket_name = roster["bucket"].iloc[i]
@@ -404,6 +415,7 @@ def run_once():
                 forecasts = pd.concat([frozen, forecasts[is_new]], ignore_index=True)
             write_csv(mine, "class/students/" + netid + ".csv", forecasts)
         if card is not None:
+            card_by_netid[netid] = card
             card_row = {"netid": netid}
             for key in card:
                 card_row[key] = json.dumps(card[key]) if isinstance(card[key], (list, dict)) else card[key]
@@ -431,7 +443,7 @@ def run_once():
     leaderboard_rows = 0
     if len(tables) > 0 and ACTUALS_BUCKET:
         try:                                  # a leaderboard problem never stops the collecting
-            board, by_lead = build_leaderboard(client, mine, master)
+            board, by_lead = build_leaderboard(client, mine, master, card_by_netid)
             if board is not None:
                 leaderboard_rows = int(len(board))
                 if PUBLIC_BUCKET:

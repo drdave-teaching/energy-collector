@@ -339,6 +339,10 @@ def render(board, by_lead, roster, waiting, now=None, live=None):
             cells.append("<td>" + number(row["score"], 1) + "</td>")
             cells.append("<td>" + number(row["range_coverage_pct"], 0, "%") + "</td>")
             cells.append("<td>" + number(row["range_width_mw"]) + "</td>")
+        test_cell = "&ndash;"
+        if "test_mae_mw" in row and not baseline and not pd.isna(row["test_mae_mw"]):
+            test_cell = number(row["test_mae_mw"])
+        cells.append("<td>" + test_cell + "</td>")
         cells.append("<td>" + number(row["hours_scored"]) + "</td>")
         rows.append("<tr" + css + ">" + "".join(cells) + "</tr>")
 
@@ -407,7 +411,7 @@ ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 <div class="card scroll"><table>
 <thead><tr><th>Rank</th><th>Forecaster</th><th title="How much better than same hour yesterday, averaged over 1-6, 7-12, 13-18 and 19-24 hours ahead">Skill</th>
 <th>Avg miss (MW)</th><th>1&ndash;6 h</th><th>7&ndash;12 h</th><th>13&ndash;18 h</th><th>19&ndash;24 h</th><th>Beat ISO-NE?</th>""" + \
-        range_heads + """<th>Hours scored</th></tr></thead>
+        range_heads + """<th title="The 2026 test-year MAE from your notebook (Lab 5 Part 7a), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th></tr></thead>
 <tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
 
 """ + live_card + """<div class="card"><h2>Skill by hours ahead</h2>
@@ -418,6 +422,7 @@ ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 <li>Every hour your model forecasts the next 24 hours. Each forecast hour is scored once Connecticut's actual load for that hour is in.</li>
 <li><b>Avg miss</b> = average |actual &minus; your expected value|, in MW. The four columns split it by how far ahead you forecast.</li>
 <li><b>Skill</b> = how much smaller your miss is than "same hour yesterday" on the exact hours you forecast, worked out for 1&ndash;6, 7&ndash;12, 13&ndash;18 and 19&ndash;24 hours ahead and averaged. Rank is by skill, so joining late is no penalty.</li>
+<li><b>Test-year MAE</b> is the score your notebook gave your model on 2026 (Lab 5 Part 7a), using the weather that actually happened. Your live <b>Avg miss</b> is usually higher, because in production your model only has the weather <i>forecast</i>, which is wrong too. That gap is the price of forecasting the weather first.</li>
 <li>The grey rows are simple forecasts to beat: <b>same hour yesterday</b> (the 0% line for skill), <b>same hour last week</b>, the <b>average of the last 6 hours</b> held flat for all 24 hours, and <b>ISO New England</b>, the grid operator's own forecast (the newest version published before each of yours).</li>
 <li>Actual load is ISO New England's live five-minute estimate for Connecticut, averaged per hour, so it can still shift a little.</li>
 </ul></div>
