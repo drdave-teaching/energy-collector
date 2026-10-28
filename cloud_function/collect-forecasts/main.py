@@ -38,7 +38,6 @@ ACTUAL_LOAD_KEY = "energy/datasets/ct_load_5min_hourly_master.csv"     # live CT
 ISONE_FORECAST_KEY = "energy/datasets/isone_ct_forecast_master.csv"     # ISO New England's own CT forecast, every version
 WEATHER_FORECAST_KEY = "energy/datasets/bdl_weather_forecast_master.csv"  # NWS forecast for Bradley Airport, every hour
 WEATHER_OBS_KEY = "energy/datasets/bdl_weather_obs_master.csv"          # what the weather at Bradley actually was
-MEDIAN_MIN_FORECASTERS = 3    # the live chart shows the class median for the next 24 hours only once 3+ students forecast
 INSTRUCTOR_NICKNAME = "dr. dave"   # roster nicknames starting with this are Dr. Dave's practice models, not students
 STALE_HOURS = 2          # newest forecast older than this = "stale" (their forecast-24h stopped)
 LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead times counts the same in the skill score
@@ -140,11 +139,25 @@ def load_isone(client):
     return table.sort_values("issued_at_utc")
 
 
+def seen_in_time(table):
+    """True where a forecast row counts: made before its hour AND first seen by the collector before that hour began.
+    The issued time is written by the student's own code, so it can't be trusted alone: a row that turns up after its
+    hour started (a backdated "forecast" of load that is already known) never counts. Rows collected before the
+    received_at_utc stamp existed fall back to their issued time."""
+    issued = pd.to_datetime(table["issued_at_utc"], utc=True)
+    target = pd.to_datetime(table["target_hour_utc"], utc=True)
+    received = issued
+    if "received_at_utc" in table.columns:
+        received = pd.to_datetime(table["received_at_utc"], utc=True, errors="coerce").fillna(issued)
+    return (issued < target) & (received <= target)
+
+
 def score_forecasts(master, actual, isone):
     """One row per (forecast, target hour) whose actual load is known, with every error the leaderboard needs."""
     pairs = master.copy()
     pairs["issued"] = pd.to_datetime(pairs["issued_at_utc"], utc=True)
     pairs["target"] = pd.to_datetime(pairs["target_hour_utc"], utc=True)
+    pairs = pairs[seen_in_time(pairs)].copy()
     pairs["actual_mw"] = actual.reindex(pairs["target"]).values
     pairs = pairs[pairs["actual_mw"].notna() & pairs["predicted_load_mw"].notna()].copy()
     if len(pairs) == 0:
@@ -292,8 +305,8 @@ def build_leaderboard(client, mine, master, cards=None):
 # Live chart for the student page: the last 24 hours and the next 24.
 #   Past hours: actual load, ISO New England, and every forecaster's latest call for that hour (made before it began),
 #   shown only once the hour is over, so nobody can copy a forecast. Red = class median, blue = #1 on the leaderboard.
-#   Next 24 hours: the class median of everyone's newest forecast (3+ students), or else Dr. Dave's practice model,
-#   plus ISO New England and the National Weather Service forecast for Bradley Airport.
+#   Next 24 hours: Dr. Dave's practice model only (anything built from student forecasts could be copied), plus ISO
+#   New England and the National Weather Service forecast for Bradley Airport.
 # ----------------------------------------------------------------------------------------------------------------
 def instructor_netids(roster):
     found = []
@@ -315,10 +328,10 @@ def build_live_chart(client, master, board, roster, now):
     if actual is not None:
         live["actual"] = actual[(actual.index >= start) & (actual.index <= hour_now)]
 
-    table = master[["netid", "issued_at_utc", "target_hour_utc", "predicted_load_mw"]].copy()
+    table = master[master["predicted_load_mw"].notna()].copy()
+    table = table[seen_in_time(table)]
     table["issued"] = pd.to_datetime(table["issued_at_utc"], utc=True)
     table["target"] = pd.to_datetime(table["target_hour_utc"], utc=True)
-    table = table[(table["issued"] < table["target"]) & table["predicted_load_mw"].notna()]
 
     # Past: each forecaster's newest forecast for each hour that is already over
     hour_over = table["target"] + pd.Timedelta(hours=1) <= pd.Timestamp(now)
@@ -339,23 +352,16 @@ def build_live_chart(client, master, board, roster, now):
         top = ranked[0]
     live["top_netid"] = top
 
-    # Next 24 hours: the class median of everyone's newest forecast, never a single student's
+    # Next 24 hours: Dr. Dave's practice model only. Never a student's forecast and never the class median: anything
+    # built from student forecasts that is shown BEFORE the hour could simply be copied and resubmitted.
     newest_issue = table.groupby("netid")["issued"].transform("max")
     upcoming = table[(table["issued"] == newest_issue) & ~hour_over & (table["target"] <= end)]
-    future = upcoming.pivot_table(index="target", columns="netid", values="predicted_load_mw")
-    students = []
-    for netid in future.columns:
-        if netid not in instructors:
-            students.append(netid)
-    if len(students) >= MEDIAN_MIN_FORECASTERS:
-        live["future"] = future[students].median(axis=1)
-        live["future_label"] = "Class median, next 24 hours (" + str(len(students)) + " forecasters)"
-    else:
-        for netid in instructors:
-            if netid in future.columns:
-                live["future"] = future[netid]
-                live["future_label"] = "Dr. Dave's practice model, next 24 hours"
-                break
+    for netid in instructors:
+        mine_next = upcoming[upcoming["netid"] == netid]
+        if len(mine_next) > 0:
+            live["future"] = mine_next.set_index("target")["predicted_load_mw"].sort_index()
+            live["future_label"] = "Dr. Dave's practice model, next 24 hours"
+            break
 
     # ISO New England: for each hour, the newest version published before that hour (and before now)
     isone = load_isone(client)
@@ -414,6 +420,11 @@ def run_once():
             forecasts = None
             card = None
         if forecasts is not None:
+            # Stamp when the collector first saw each row; seen_in_time() only scores hours that began after that.
+            # Rows claiming to be issued in the future are dropped.
+            issued = pd.to_datetime(forecasts["issued_at_utc"], utc=True, errors="coerce")
+            forecasts = forecasts[issued.notna() & (issued <= pd.Timestamp(now) + pd.Timedelta(minutes=5))].copy()
+            forecasts["received_at_utc"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
             # Frozen: once a forecast is in the class copy, a later edit in the student's bucket can't change it.
             # Only forecasts issued after the newest one we already hold are added.
             frozen = read_csv(mine, "class/students/" + netid + ".csv")

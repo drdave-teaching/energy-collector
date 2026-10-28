@@ -9,8 +9,7 @@ import numpy as np
 import pandas as pd
 
 EASTERN = ZoneInfo("America/New_York")
-LINE_COLORS = ["#F2A900", "#2E86DE", "#10AC84", "#EE5253", "#8E44AD", "#FF9F43"]
-CHART_TOP = 6            # how many forecasters get a line in the chart
+INSTRUCTOR_NICKNAME = "dr. dave"     # roster nicknames starting with this are the instructor's models, not students
 
 
 def display_names(roster):
@@ -46,26 +45,43 @@ def number(value, digits=0, suffix=""):
     return format(value, "," + "." + str(digits) + "f") + suffix
 
 
-def skill_chart(by_lead, board, names):
-    """SVG: skill vs same hour yesterday at every lead time, for the top forecasters and ISO New England."""
-    students = board[~board["netid"].str.startswith("BASELINE")]["netid"].tolist()[:CHART_TOP]
+def skill_chart(by_lead, board, names, instructors=()):
+    """SVG: skill vs same hour yesterday at every lead time for #1, the middle of the class, last place, Dr. Dave and ISO."""
+    ranked = board[~board["netid"].str.startswith("BASELINE") & board["skill_pct"].notna()]["netid"].tolist()
+    students = []
+    for netid in ranked:
+        if netid not in instructors:
+            students.append(netid)
     width, height, left, right, top, bottom = 760, 300, 52, 16, 16, 40
     plot_w = width - left - right
     plot_h = height - top - bottom
-    lines = []
-    for netid in students:
+
+    def skill_of(netid):
         rows = by_lead[by_lead["netid"] == netid].set_index("lead_hours")
-        skill = 100 * (1 - rows["score"] / rows["same_hour_yesterday_mae_mw"])
-        lines.append((names.get(netid, netid), skill))
+        return 100 * (1 - rows["score"] / rows["same_hour_yesterday_mae_mw"])
+
+    lines = []                                   # (label, skill by lead, color, dashed?)
+    if len(students) >= 2:
+        lines.append(("Last place", skill_of(students[-1]), "#9aa5b1", False))
+    if len(students) >= 3:
+        everyone = {}
+        for netid in students:
+            everyone[netid] = skill_of(netid)
+        lines.append(("Middle of the class (median)", pd.DataFrame(everyone).median(axis=1), "#d62828", False))
+    for netid in instructors:
+        if netid in by_lead["netid"].values:
+            lines.append((names.get(netid, "Dr. Dave"), skill_of(netid), "var(--gold)", False))
+    if len(students) >= 1:
+        lines.append(("#1: " + names.get(students[0], "Forecaster"), skill_of(students[0]), "#1f6feb", False))
     iso = by_lead[by_lead["isone_mae_mw"].notna()].copy()
     if len(iso) > 0:
         iso["iso_total"] = iso["isone_mae_mw"] * iso["forecasts"]
         iso["base_total"] = iso["same_hour_yesterday_mae_mw"] * iso["forecasts"]
         sums = iso.groupby("lead_hours")[["iso_total", "base_total"]].sum()
-        lines.append(("ISO New England", 100 * (1 - sums["iso_total"] / sums["base_total"])))
+        lines.append(("ISO New England", 100 * (1 - sums["iso_total"] / sums["base_total"]), "var(--muted)", True))
 
     values = [0.0]
-    for _, skill in lines:
+    for _, skill, _, _ in lines:
         values.extend([float(v) for v in skill.dropna()])
     low = max(-100.0, min(-25.0, np.floor(min(values) / 25) * 25))     # anything worse than -100% sits on the bottom edge
     high = min(100.0, max(50.0, np.ceil(max(values) / 25) * 25))
@@ -92,10 +108,8 @@ def skill_chart(by_lead, board, names):
     parts.append('<text x="' + format(left + plot_w / 2, ".1f") + '" y="' + str(height - 1)
                  + '" class="axis" text-anchor="middle">hours ahead</text>')
     legend = []
-    for i, (label, skill) in enumerate(lines):
-        is_iso = label == "ISO New England"
-        color = "var(--muted)" if is_iso else LINE_COLORS[i % len(LINE_COLORS)]
-        dash = ' stroke-dasharray="6 4"' if is_iso else ""
+    for label, skill, color, dashed in lines:
+        dash = ' stroke-dasharray="6 4"' if dashed else ""
         points = []
         for lead, value in skill.dropna().items():
             points.append(format(x(int(lead)), ".1f") + "," + format(y(float(value)), ".1f"))
@@ -366,7 +380,12 @@ def render(board, by_lead, roster, waiting, now=None, live=None):
     range_heads = ""
     if has_range:
         range_heads = '<th title="Average score per forecast hour, lower is better. With no range it equals Avg miss">Score</th>' +             '<th title="Share of hours the actual load fell between your low and high">Inside range</th><th>Range width (MW)</th>'
-    chart_svg, chart_legend = skill_chart(by_lead, board, names)
+    instructors = []
+    if "nickname" in roster.columns:
+        for i in range(len(roster)):
+            if str(roster["nickname"].iloc[i]).strip().lower().startswith(INSTRUCTOR_NICKNAME):
+                instructors.append(str(roster["netid"].iloc[i]).strip().lower())
+    chart_svg, chart_legend = skill_chart(by_lead, board, names, instructors)
     live_card = ""
     if live is not None:
         live_svg, live_legend = live_chart(live, names)
@@ -374,7 +393,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None):
             live_card = """<div class="card"><h2>The last 24 hours and the next 24</h2>
 <p class="note" style="margin-top:0">""" + weather_summary(live) + """</p>
 """ + live_svg + '<div class="legend">' + live_legend + """</div>
-<p class="note">Gray lines are each forecaster's latest call for an hour, made before it began. They appear only after the hour is over, so nobody can copy a forecast. The next 24 hours show only the class median, never one person's forecast.</p></div>
+<p class="note">Gray lines are each forecaster's latest call for an hour, made before it began. They appear only after the hour is over, so nobody can copy a forecast. The next 24 hours show only Dr. Dave's practice model and ISO New England, never anything built from student forecasts. A forecast counts only for hours that start after the collector first sees it, so a late or backdated forecast scores nothing.</p></div>
 """
     waiting_note = ""
     if waiting > 0:
@@ -432,7 +451,7 @@ ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 <tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
 
 """ + live_card + """<div class="card"><h2>Skill by hours ahead</h2>
-<p class="note" style="margin-top:0">Above 0% = better than "same hour yesterday" at that many hours ahead. Far-ahead hours are harder, so they count as much as next-hour ones.</p>
+<p class="note" style="margin-top:0">Above 0% = better than "same hour yesterday" at that many hours ahead. Far-ahead hours are harder, so they count as much as next-hour ones. Lines: #1 on the leaderboard, the middle of the class (the median student at each hour ahead), last place, Dr. Dave's practice model and ISO New England.</p>
 """ + chart_svg + '<div class="legend">' + chart_legend + """</div></div>
 
 <div class="card"><h2>How it's scored</h2><ul>
@@ -452,7 +471,8 @@ ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 <li>A MW outside costs <b>10 times</b> a MW of width. Wide is safe but adds up; too narrow is cheap until the actual gets out.</li>
 <li>With no range (low = expected = high) the score is exactly your Avg miss, |actual &minus; expected|, the Lab 5 score. So everyone ranks on one scale.</li>
 </ul>
-<p style="margin:0 0 6px">One hour, actual load 3,100 MW. All four expected 3,000 MW, so all four missed by 100 MW:</p>
+<p style="margin:0 0 6px">Each hourly run sends <b>24 rows</b>, one per hour ahead, each with its own low, expected and high. At 2:20 p.m. your model forecasts 3 p.m. today through 2 p.m. tomorrow. When one of those hours is over, that row gets scored, and your score is the average over every row of every run. Far-ahead rows are harder, so an honest range is usually wider for them.</p>
+<p style="margin:0 0 6px">Take one of those rows: <b>1 p.m. tomorrow</b>, 23 hours ahead. The actual load turns out to be 3,100 MW. Four forecasters all expected 3,000 MW, so all four missed by 100 MW, but their ranges differ:</p>
 <div class="scroll"><table style="min-width:640px">
 <thead><tr><th style="text-align:left">Forecaster</th><th>Low</th><th>High</th><th>Width</th><th>Outside</th><th>Score</th></tr></thead>
 <tbody>
