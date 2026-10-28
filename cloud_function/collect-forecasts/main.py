@@ -472,7 +472,7 @@ def run_once():
                         live = build_live_chart(client, master, board, roster, now)
                     except Exception as err:
                         logging.error("Live chart: %s\n%s", err, traceback.format_exc())
-                    page = leaderboard_page.render(board, by_lead, roster, waiting, live=live)
+                    page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses)
                     blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
                     blob.cache_control = "public, max-age=60"
                     blob.upload_from_string(page, content_type="text/html; charset=utf-8")

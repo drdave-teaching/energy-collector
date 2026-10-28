@@ -335,7 +335,7 @@ def live_chart(live, names):
     return "".join(parts), "".join(legend)
 
 
-def render(board, by_lead, roster, waiting, now=None, live=None):
+def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None):
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     has_range = board["range_coverage_pct"].notna().any()
@@ -400,6 +400,29 @@ def render(board, by_lead, roster, waiting, now=None, live=None):
         waiting_note = "<p class=\"note\">" + str(waiting) + " more forecaster" + ("s are" if waiting > 1 else " is") + \
             " signed up and waiting for a first scored hour.</p>"
 
+    # Who is forecasting right now (nicknames only), so a new forecaster sees their name before their first score
+    status_words = {"ok": "forecasting &#10003;", "stale": "stopped: check forecast-24h",
+                    "not_shared": "share pending (Lab 5 Part 7e)", "no_forecasts_yet": "no forecast yet (Lab 5 Part 7d)",
+                    "bucket_not_found": "bucket not found: ask Dr. Dave", "error": "collector error: ask Dr. Dave"}
+    live_now = ""
+    if statuses:
+        scored = set(board["netid"])
+        items = []
+        live_count = 0
+        for status in statuses:
+            name = html.escape(names.get(status.get("netid"), "Forecaster"))
+            word = status_words.get(status.get("status"), html.escape(str(status.get("status"))))
+            if status.get("status") == "ok":
+                live_count += 1
+                if status.get("netid") not in scored:
+                    word = word + ", first score after its first full hour"
+            items.append('<li><b>' + name + '</b>: ' + word + "</li>")
+        live_now = ('<div class="card"><h2>Forecasting now: ' + str(live_count) + " of " + str(len(statuses)) + "</h2>"
+                    '<p class="note" style="margin-top:0">Every forecaster the collector reads each hour. A new forecast '
+                    "is scored once the hour it forecasts is over and Connecticut's actual load is in, so a model shipped "
+                    "tonight shows up in the table above within about two hours.</p><ul class=\"forecasting\">"
+                    + "".join(items) + "</ul></div>" + chr(10))
+
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="600">
@@ -437,6 +460,7 @@ svg .rain { fill:var(--rain); opacity:.7; }
 .legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:6px; font-size:13px; }
 .key i { display:inline-block; width:14px; height:4px; border-radius:2px; margin-right:6px; vertical-align:middle; }
 ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
+ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.forecasting { columns: 1; } }
 </style></head>
 <body><main>
 <h1>Connecticut Load Forecast Leaderboard</h1>
@@ -449,7 +473,7 @@ ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 <th>Avg miss (MW)</th><th>1&ndash;6 h</th><th>7&ndash;12 h</th><th>13&ndash;18 h</th><th>19&ndash;24 h</th><th>Beat ISO-NE?</th>""" + \
         range_heads + """<th title="The 2026 test-year MAE from your notebook (Lab 5 Part 7a), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th></tr></thead>
 <tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
-
+""" + live_now + """
 """ + live_card + """<div class="card"><h2>Skill by hours ahead</h2>
 <p class="note" style="margin-top:0">Above 0% = better than "same hour yesterday" at that many hours ahead. Far-ahead hours are harder, so they count as much as next-hour ones. Lines: #1 on the leaderboard, the middle of the class (the median student at each hour ahead), last place, Dr. Dave's practice model and ISO New England.</p>
 """ + chart_svg + '<div class="legend">' + chart_legend + """</div></div>
