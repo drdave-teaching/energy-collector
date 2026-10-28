@@ -181,15 +181,16 @@ def series_points(series, x, y):
     return runs
 
 
-def draw(series, x, y, color, width, extra=""):
+def draw(series, x, y, color, width, extra="", tooltip=""):
     parts = []
+    title = "<title>" + html.escape(tooltip) + "</title>" if tooltip else ""
     for points in series_points(series, x, y):
         if len(points) == 1:
             xy = points[0].split(",")
             parts.append('<circle cx="' + xy[0] + '" cy="' + xy[1] + '" r="' + str(width + 1) + '" fill="' + color + '"/>')
         else:
             parts.append('<polyline fill="none" stroke="' + color + '" stroke-width="' + str(width) + '"' + extra
-                         + ' stroke-linejoin="round" points="' + " ".join(points) + '"/>')
+                         + ' stroke-linejoin="round" points="' + " ".join(points) + '">' + title + "</polyline>")
     return "".join(parts)
 
 
@@ -213,6 +214,9 @@ def live_chart(live, names):
             values.extend([float(v) for v in live[key].dropna()])
     if past is not None and past.shape[1] > 0:
         values.extend([float(v) for v in past.stack().dropna()])
+    future_students = live.get("future_by_student")
+    if future_students is not None and future_students.shape[1] > 0:
+        values.extend([float(v) for v in future_students.stack().dropna()])
     if len(values) == 0:
         return "", ""
     low = np.floor((min(values) - 50) / 250) * 250
@@ -251,6 +255,15 @@ def live_chart(live, names):
     if live.get("past_median") is not None and past is not None and past.shape[1] >= 2:
         parts.append(draw(live["past_median"], x, y, "#d62828", 2.6))
         legend.append('<span class="key"><i style="background:#d62828"></i>Class median</span>')
+    if future_students is not None and future_students.shape[1] > 0:
+        for netid in future_students.columns:
+            parts.append(draw(future_students[netid], x, y, "var(--student)", 1.2, ' stroke-dasharray="4 3"',
+                              tooltip=names.get(netid, "Forecaster")))
+        legend.append('<span class="key"><i style="background:var(--student)"></i>Each student&rsquo;s next 24 hours '
+                      "(dashed; hover a line for the nickname)</span>")
+    if live.get("future_median") is not None and len(live["future_median"]) > 0:
+        parts.append(draw(live["future_median"], x, y, "#d62828", 2.6, ' stroke-dasharray="7 4"', tooltip="Class median"))
+        legend.append('<span class="key"><i style="background:#d62828"></i>Class median, next 24 hours (dashed)</span>')
     if live.get("future") is not None and len(live["future"]) > 0:
         color = "#d62828" if live.get("future_label", "").startswith("Class") else "var(--gold)"
         parts.append(draw(live["future"], x, y, color, 2.6, ' stroke-dasharray="7 4"'))
@@ -393,7 +406,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None):
             live_card = """<div class="card"><h2>The last 24 hours and the next 24</h2>
 <p class="note" style="margin-top:0">""" + weather_summary(live) + """</p>
 """ + live_svg + '<div class="legend">' + live_legend + """</div>
-<p class="note">Gray lines are each forecaster's latest call for an hour, made before it began. They appear only after the hour is over, so nobody can copy a forecast. The next 24 hours show only Dr. Dave's practice model and ISO New England, never anything built from student forecasts. A forecast counts only for hours that start after the collector first sees it, so a late or backdated forecast scores nothing.</p></div>
+<p class="note">On the left, gray lines are each forecaster's latest call for an hour, made before it began. For Lab 5 the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model compares before the hour arrives (hover a line for its nickname). A forecast counts only for hours that start after the collector first sees it, so a late or backdated forecast scores nothing.</p></div>
 """
     waiting_note = ""
     if waiting > 0:

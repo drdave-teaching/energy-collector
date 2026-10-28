@@ -39,6 +39,7 @@ ISONE_FORECAST_KEY = "energy/datasets/isone_ct_forecast_master.csv"     # ISO Ne
 WEATHER_FORECAST_KEY = "energy/datasets/bdl_weather_forecast_master.csv"  # NWS forecast for Bradley Airport, every hour
 WEATHER_OBS_KEY = "energy/datasets/bdl_weather_obs_master.csv"          # what the weather at Bradley actually was
 INSTRUCTOR_NICKNAME = "dr. dave"   # roster nicknames starting with this are Dr. Dave's practice models, not students
+SHOW_STUDENT_FUTURE = True   # Lab 5: everyone's next 24 hours are public. Set False for Lab 6 and the final project.
 STALE_HOURS = 2          # newest forecast older than this = "stale" (their forecast-24h stopped)
 LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead times counts the same in the skill score
 INTERVAL_ALPHA = 0.2     # low/high are an 80% range: the 10th and 90th percentiles
@@ -362,6 +363,14 @@ def build_live_chart(client, master, board, roster, now):
             live["future"] = mine_next.set_index("target")["predicted_load_mw"].sort_index()
             live["future_label"] = "Dr. Dave's practice model, next 24 hours"
             break
+    # Lab 5 only (SHOW_STUDENT_FUTURE): every student's newest forecast for the next 24 hours, and their median
+    if SHOW_STUDENT_FUTURE:
+        students_next = upcoming[~upcoming["netid"].isin(instructors)]
+        future = students_next.pivot_table(index="target", columns="netid", values="predicted_load_mw")
+        if future.shape[1] > 0:
+            live["future_by_student"] = future
+        if future.shape[1] >= 2:
+            live["future_median"] = future.median(axis=1)
 
     # ISO New England: for each hour, the newest version published before that hour (and before now)
     isone = load_isone(client)
