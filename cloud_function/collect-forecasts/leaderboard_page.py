@@ -249,6 +249,11 @@ def live_chart(live, names):
     temps = []
     obs = live.get("weather_obs")
     fc = live.get("weather_forecast")
+    old_fc = live.get("weather_day_ahead")
+    if old_fc is not None and ("temp_f" not in old_fc.columns or old_fc["temp_f"].notna().sum() == 0):
+        old_fc = None
+    if old_fc is not None:
+        temps.extend([float(v) for v in old_fc["temp_f"].dropna()])
     if obs is not None and "temp_f" in obs.columns:
         temps.extend([float(v) for v in obs["temp_f"].dropna()])
     if fc is not None and "temp_f" in fc.columns:
@@ -275,6 +280,8 @@ def live_chart(live, names):
                                  + '" width="' + format(bar_w, ".1f") + '" height="' + format(bar_h, ".1f") + '" class="rain"/>')
             parts.append('<text x="' + str(width - right + 6) + '" y="' + str(wx_top + 10) + '" class="axis">100%</text>')
             parts.append('<text x="' + str(width - right + 6) + '" y="' + str(wx_top + wx_h) + '" class="axis">0%</text>')
+        if old_fc is not None:
+            parts.append(draw(old_fc["temp_f"], x, ty, "#e67e22", 1.6, ' stroke-dasharray="1.5 3" opacity="0.8"'))
         if obs is not None and "temp_f" in obs.columns:
             parts.append(draw(obs["temp_f"], x, ty, "#e67e22", 2.2))
         if fc is not None and "temp_f" in fc.columns:
@@ -284,6 +291,16 @@ def live_chart(live, names):
                     parts.append('<text x="' + format(x(stamp), ".1f") + '" y="' + format(ty(temp) - 7, ".1f")
                                  + '" class="axis" text-anchor="middle">' + format(temp, ".0f") + "&deg;</text>")
         legend.append('<span class="key"><i style="background:#e67e22"></i>Temperature at Bradley (solid = measured, dashed = forecast)</span>')
+        if old_fc is not None:
+            # How far off was the forecast made ~24 hours ahead? Compare it with the measured temperature, hour by hour.
+            miss = ""
+            if obs is not None and "temp_f" in obs.columns:
+                both = pd.concat([old_fc["temp_f"].rename("said"), obs["temp_f"].rename("was")], axis=1).dropna()
+                if len(both) > 0:
+                    miss = ", missed by " + format((both["said"] - both["was"]).abs().mean(), ".1f") + "&deg;F on average"
+            age = format(old_fc["age_hours"].median(), ".0f") if "age_hours" in old_fc.columns else "24"
+            legend.append('<span class="key"><i style="background:#e67e22;opacity:0.6"></i>Dotted = what the forecast said about '
+                          + age + " hours ahead" + miss + "</span>")
         if has_rain:
             legend.append('<span class="key"><i style="background:var(--rain)"></i>Chance of rain (bars, right scale)</span>')
 

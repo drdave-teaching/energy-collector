@@ -378,6 +378,13 @@ def build_live_chart(client, master, board, roster, now):
         newest = forecast[forecast["scraped_hour_utc"] == forecast["scraped_hour_utc"].max()]
         newest = newest[(newest["target_hour_utc"] >= hour_now) & (newest["target_hour_utc"] <= end)]
         live["weather_forecast"] = newest.set_index("target_hour_utc").sort_index()
+        # Past hours: what the forecast said about 24 hours BEFORE each hour (the oldest snapshot we kept, up to 24 h).
+        # That's the weather a model had for its longest lead, so its gap to the measured line is the weather error.
+        old = forecast[(forecast["target_hour_utc"] >= start) & (forecast["target_hour_utc"] <= hour_now)].copy()
+        old = old[old["scraped_hour_utc"] < old["target_hour_utc"]]
+        old["age_hours"] = (old["target_hour_utc"] - old["scraped_hour_utc"]) / pd.Timedelta(hours=1)
+        old = old.sort_values(["target_hour_utc", "scraped_hour_utc"]).drop_duplicates("target_hour_utc", keep="first")
+        live["weather_day_ahead"] = old.set_index("target_hour_utc").sort_index()
     return live
 
 
