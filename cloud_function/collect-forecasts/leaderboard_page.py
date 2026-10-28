@@ -215,6 +215,7 @@ def live_chart(live, names):
     if past is not None and past.shape[1] > 0:
         values.extend([float(v) for v in past.stack().dropna()])
     future_students = live.get("future_by_student")
+    same_note = ""
     if future_students is not None and future_students.shape[1] > 0:
         values.extend([float(v) for v in future_students.stack().dropna()])
     if len(values) == 0:
@@ -257,10 +258,20 @@ def live_chart(live, names):
         legend.append('<span class="key"><i style="background:#d62828"></i>Class median</span>')
     if future_students is not None and future_students.shape[1] > 0:
         for netid in future_students.columns:
-            parts.append(draw(future_students[netid], x, y, "var(--student)", 1.2, ' stroke-dasharray="4 3"',
+            parts.append(draw(future_students[netid], x, y, "#8d96a8", 1.5, ' opacity="0.9"',
                               tooltip=names.get(netid, "Forecaster")))
-        legend.append('<span class="key"><i style="background:var(--student)"></i>Each student&rsquo;s next 24 hours '
-                      "(dashed; hover a line for the nickname)</span>")
+        legend.append('<span class="key"><i style="background:#8d96a8"></i>Each student&rsquo;s next 24 hours '
+                      "(hover a line for the nickname)</span>")
+        # How many students sent the exact same forecast (usually the default Lab 5 champion)?
+        groups = {}
+        for netid in future_students.columns:
+            signature = tuple(future_students[netid].round(0).fillna(-1).tolist())
+            groups[signature] = groups.get(signature, 0) + 1
+        biggest = max(groups.values())
+        if biggest >= 2:
+            same_note = (str(biggest) + " of " + str(future_students.shape[1]) + " students sent the exact same 24 hours "
+                         "(the default Lab 5 model), so their lines sit on top of each other. Change one thing in Lab 5 "
+                         "Part 5 or 6, re-run 7a to 7d, and get a line of your own.")
     if live.get("future_median") is not None and len(live["future_median"]) > 0:
         parts.append(draw(live["future_median"], x, y, "#d62828", 2.6, ' stroke-dasharray="7 4"', tooltip="Class median"))
         legend.append('<span class="key"><i style="background:#d62828"></i>Class median, next 24 hours (dashed)</span>')
@@ -345,6 +356,8 @@ def live_chart(live, names):
     parts.append('<text x="' + format(x(now) - 6, ".1f") + '" y="' + str(load_top - 6) + '" class="axis" text-anchor="end">&larr; what happened</text>')
     parts.append('<text x="' + format(x(now) + 6, ".1f") + '" y="' + str(load_top - 6) + '" class="axis">what&rsquo;s next &rarr;</text>')
     parts.append("</svg>")
+    if same_note:
+        legend.append('<span class="key" style="flex-basis:100%"><b>Same model?</b> ' + html.escape(same_note) + "</span>")
     return "".join(parts), "".join(legend)
 
 
