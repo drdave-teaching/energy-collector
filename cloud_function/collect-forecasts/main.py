@@ -43,6 +43,8 @@ SHOW_STUDENT_FUTURE = True   # Lab 5: everyone's next 24 hours are public. Set F
 STALE_HOURS = 2          # newest forecast older than this = "stale" (their forecast-24h stopped)
 LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead times counts the same in the skill score
 INTERVAL_ALPHA = 0.2     # low/high are an 80% range: the 10th and 90th percentiles
+# Lab 6 table: range forecasts (low and high filled in) issued on or after this time, ranked by CRPS skill
+LAB6_START_UTC = os.getenv("LAB6_START_UTC", "2026-11-02T00:00:00Z")
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 
@@ -251,10 +253,10 @@ def leaderboard_row(name, rows, score_column, prediction_column):
 def build_leaderboard(client, mine, master, cards=None):
     actual = load_actuals(client)
     if actual is None:
-        return None, None
+        return None, None, None
     pairs = score_forecasts(master, actual, load_isone(client))
     if len(pairs) == 0:
-        return None, None
+        return None, None, None
     rows = []
     for netid, group in pairs.groupby("netid"):
         row = leaderboard_row(netid, group, "score", "predicted_load_mw")
@@ -299,7 +301,26 @@ def build_leaderboard(client, mine, master, cards=None):
         same_hour_yesterday_mae_mw=("baseline_abs_error_mw", "mean"), isone_mae_mw=("isone_abs_error_mw", "mean")).round(1)
     write_csv(mine, "class/leaderboard_by_lead.csv", by_lead.reset_index())
     write_csv(mine, "class/scored_forecasts.csv", pairs.drop(columns=["issued", "target"]))
-    return board, by_lead.reset_index()
+    lab6 = build_lab6_board(mine, pairs)
+    return board, by_lead.reset_index(), lab6
+
+
+def build_lab6_board(mine, pairs):
+    """Lab 6: only forecasts WITH a range, issued since LAB6_START_UTC. CRPS per hour = the leaderboard score
+    (3-quantile CRPS = weighted interval score); rank = CRPS skill vs same hour yesterday, so joining late is no penalty."""
+    ranged = pairs[pairs["inside_range"].notna() & (pairs["issued"] >= pd.Timestamp(LAB6_START_UTC))]
+    if len(ranged) == 0:
+        return None
+    rows = []
+    for netid, group in ranged.groupby("netid"):
+        row = leaderboard_row(netid, group, "score", "predicted_load_mw")
+        row["range_method"] = str(group["range_method"].iloc[-1]) if "range_method" in group.columns else ""
+        rows.append(row)
+    lab6 = pd.DataFrame(rows).rename(columns={"score": "crps_mw", "skill_pct": "crps_skill_pct"})
+    lab6 = lab6.sort_values("crps_skill_pct", ascending=False, na_position="last")
+    lab6.insert(0, "rank", range(1, len(lab6) + 1))
+    write_csv(mine, "class/leaderboard_lab6.csv", lab6)
+    return lab6
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -482,7 +503,7 @@ def run_once():
     leaderboard_rows = 0
     if len(tables) > 0 and ACTUALS_BUCKET:
         try:                                  # a leaderboard problem never stops the collecting
-            board, by_lead = build_leaderboard(client, mine, master, card_by_netid)
+            board, by_lead, lab6 = build_leaderboard(client, mine, master, card_by_netid)
             if board is not None:
                 leaderboard_rows = int(len(board))
                 if PUBLIC_BUCKET:
@@ -492,7 +513,7 @@ def run_once():
                         live = build_live_chart(client, master, board, roster, now)
                     except Exception as err:
                         logging.error("Live chart: %s\n%s", err, traceback.format_exc())
-                    page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses)
+                    page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses, lab6=lab6)
                     blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
                     blob.cache_control = "public, max-age=60"
                     blob.upload_from_string(page, content_type="text/html; charset=utf-8")

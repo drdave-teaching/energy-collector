@@ -367,7 +367,7 @@ def live_chart(live, names):
     return "".join(parts), "".join(legend)
 
 
-def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None):
+def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None):
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     has_range = board["range_coverage_pct"].notna().any()
@@ -411,7 +411,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None):
 
     range_heads = ""
     if has_range:
-        range_heads = '<th title="Average score per forecast hour, lower is better. With no range it equals Avg miss">Score</th>' +             '<th title="Share of hours the actual load fell between your low and high">Inside range</th><th>Range width (MW)</th>'
+        range_heads = '<th title="Average CRPS per forecast hour, lower is better. With no range it equals Avg miss">CRPS</th>' +             '<th title="Share of hours the actual load fell between your low and high">Inside range</th><th>Range width (MW)</th>'
     instructors = []
     if "nickname" in roster.columns:
         for i in range(len(roster)):
@@ -454,6 +454,24 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None):
                     "is scored once the hour it forecasts is over and Connecticut's actual load is in, so a model shipped "
                     "tonight shows up in the table above within about two hours.</p><ul class=\"forecasting\">"
                     + "".join(items) + "</ul></div>" + chr(10))
+
+    # Lab 6: ranges only, ranked by CRPS skill
+    lab6_card = ""
+    if lab6 is not None and len(lab6) > 0:
+        lab6_rows = []
+        for i in range(len(lab6)):
+            row = lab6.iloc[i]
+            css = ' class="top"' if i == 0 else ""
+            lab6_rows.append("<tr" + css + "><td>" + str(i + 1) + '</td><td class="name">' +
+                             html.escape(names.get(row["netid"], "Forecaster")) + '</td><td class="skill">' +
+                             number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
+                             number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
+                             "</td><td>" + number(row["mae_mw"]) + "</td><td>" + number(row["hours_scored"]) + "</td></tr>")
+        lab6_card = """<div class="card scroll"><h2>Lab 6 &middot; Ranges, ranked by CRPS</h2>
+<p class="note" style="margin-top:0">Only forecasts with a low and a high, made since Lab 6 opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside.</p>
+<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Avg miss (MW)</th><th>Hours scored</th></tr></thead>
+<tbody>""" + "".join(lab6_rows) + """</tbody></table></div>
+"""
 
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -500,7 +518,7 @@ ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.
         str(len(students)) + """ forecaster""" + ("" if len(students) == 1 else "s") + """ scored &middot; forecasts made """ + \
         eastern(first) + " to " + eastern(last) + """</p>
 
-<div class="card scroll"><table>
+""" + lab6_card + """<div class="card scroll"><table>
 <thead><tr><th>Rank</th><th>Forecaster</th><th title="How much better than same hour yesterday, averaged over 1-6, 7-12, 13-18 and 19-24 hours ahead">Skill</th>
 <th>Avg miss (MW)</th><th>1&ndash;6 h</th><th>7&ndash;12 h</th><th>13&ndash;18 h</th><th>19&ndash;24 h</th><th>Beat ISO-NE?</th>""" + \
         range_heads + """<th title="The 2026 test-year MAE from your notebook (Lab 5 Part 7a), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th></tr></thead>
@@ -519,9 +537,9 @@ ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.
 <li>Actual load is ISO New England's live five-minute estimate for Connecticut, averaged per hour, so it can still shift a little.</li>
 </ul></div>
 
-<div class="card"><h2>Scoring a range: low, expected and high (Lab 6 and the final project)</h2>
+<div class="card"><h2>Scoring a range: low, expected and high, the CRPS (Lab 6 and the final project)</h2>
 <p style="margin:0 0 8px">Your low and high are your 10th and 90th percentiles: about 8 hours in 10 should land between them. Every forecast hour gets one score, in MW, lower is better:</p>
-<p style="margin:0 0 8px;text-align:center"><b>score = ( 0.5 &times; |actual &minus; expected| + 0.1 &times; width + 1 &times; outside ) &divide; 1.5</b></p>
+<p style="margin:0 0 8px;text-align:center"><b>CRPS = ( 0.5 &times; |actual &minus; expected| + 0.1 &times; width + 1 &times; outside ) &divide; 1.5</b></p>
 <ul style="margin-bottom:10px">
 <li><b>width</b> = high &minus; low. <b>outside</b> = how many MW the actual fell outside your range (0 when it lands inside).</li>
 <li>A MW outside costs <b>10 times</b> a MW of width. Wide is safe but adds up; too narrow is cheap until the actual gets out.</li>
@@ -537,7 +555,7 @@ ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.
 <tr class="top"><td class="name">Honest</td><td>2,850</td><td>3,200</td><td>350</td><td>0</td><td>(50 + 35 + 0) &divide; 1.5 = <b>56.7</b></td></tr>
 <tr><td class="name">Too wide</td><td>2,000</td><td>4,000</td><td>2,000</td><td>0</td><td>(50 + 200 + 0) &divide; 1.5 = <b>166.7</b></td></tr>
 </tbody></table></div>
-<p class="note">Over many hours the lowest score goes to the range that holds about 80% of actual loads, no more, no less: honesty is the winning strategy. Watch your <b>Inside range</b> column: well under 80% means widen, well over means narrow. This is the weighted interval score used in forecasting competitions.</p>
+<p class="note">Over many hours the lowest score goes to the range that holds about 80% of actual loads, no more, no less: honesty is the winning strategy. Watch your <b>Inside range</b> column: well under 80% means widen, well over means narrow. This is the CRPS (continuous ranked probability score) worked out from three percentiles, also called the weighted interval score, the score forecasting competitions use.</p>
 </div>
 <p class="note">Data: ISO New England (ISO Express), National Weather Service, Iowa State Mesonet. This page refreshes itself every 10 minutes.</p>
 </main></body></html>
