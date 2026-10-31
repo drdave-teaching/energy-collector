@@ -349,15 +349,16 @@ def build_live_chart(client, master, board, roster, now):
     actual = load_actuals(client)
     if actual is not None:
         live["actual"] = actual[(actual.index >= start) & (actual.index <= hour_now)]
-        # The simple baselines for the next 24 hours, built only from load that is already over (as the leaderboard scores them)
+        # The simple baselines for the last 24 hours and the next 24, built only from load that is already over (as the leaderboard scores them)
         hourly = actual[~actual.index.duplicated(keep="last")]
         over = hourly[hourly.index + pd.Timedelta(hours=1) <= pd.Timestamp(now)]
         targets = pd.date_range(hour_now + pd.Timedelta(hours=1), end, freq="h")
-        yesterday_source = targets - pd.Timedelta(hours=24)
+        all_hours = pd.date_range(start, end, freq="h")
+        yesterday_source = all_hours - pd.Timedelta(hours=24)
         not_over = yesterday_source + pd.Timedelta(hours=1) > pd.Timestamp(now)
         yesterday_source = yesterday_source.where(~not_over, yesterday_source - pd.Timedelta(hours=24))
-        live["baseline_yesterday"] = pd.Series(over.reindex(yesterday_source).values, index=targets)
-        live["baseline_last_week"] = pd.Series(over.reindex(targets - pd.Timedelta(hours=168)).values, index=targets)
+        live["baseline_yesterday"] = pd.Series(over.reindex(yesterday_source).values, index=all_hours)
+        live["baseline_last_week"] = pd.Series(over.reindex(all_hours - pd.Timedelta(hours=168)).values, index=all_hours)
         if len(over) >= 4:
             live["baseline_six_hour"] = pd.Series(float(over.tail(6).mean()), index=targets)
 
@@ -371,11 +372,14 @@ def build_live_chart(client, master, board, roster, now):
     past = table[hour_over & (table["target"] >= start)].sort_values("issued")
     past = past.groupby(["target", "netid"])["predicted_load_mw"].last().unstack("netid")
     live["past_by_student"] = past
-    if past.shape[1] > 0:
-        live["past_median"] = past.median(axis=1)
+    past_students = past.drop(columns=instructors, errors="ignore")
+    if past_students.shape[1] > 0:
+        live["past_median"] = past_students.median(axis=1)
 
     # #1 on the leaderboard: a student if there is one, else Dr. Dave's practice model
     ranked = board[~board["netid"].str.startswith("BASELINE")]["netid"].tolist()
+    live["ranked_netids"] = ranked
+    live["instructor_netids"] = instructors
     top = None
     for netid in ranked:
         if netid not in instructors:
@@ -393,7 +397,7 @@ def build_live_chart(client, master, board, roster, now):
         mine_next = upcoming[upcoming["netid"] == netid]
         if len(mine_next) > 0:
             live["future"] = mine_next.set_index("target")["predicted_load_mw"].sort_index()
-            live["future_label"] = "Dr. Dave's practice model, next 24 hours"
+            live["future_netid"] = netid
             break
     # Lab 5 only (SHOW_STUDENT_FUTURE): every student's newest forecast for the next 24 hours, and their median
     if SHOW_STUDENT_FUTURE:

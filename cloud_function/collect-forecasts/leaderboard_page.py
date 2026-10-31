@@ -11,6 +11,92 @@ import pandas as pd
 EASTERN = ZoneInfo("America/New_York")
 INSTRUCTOR_NICKNAME = "dr. dave"     # roster nicknames starting with this are the instructor's models, not students
 
+# The boxes above the live chart. A forecaster you add keeps its color until you uncheck it; the page's 10-minute refresh
+# keeps your choices in this browser only.
+LINE_PICKER_SCRIPT = """<script>
+(function () {
+  var box = document.getElementById("linepicker");
+  if (!box) { return; }
+  var STORE = "leaderboard-lines";
+  var COLORS = ["#cf79ec", "#297722", "#9c9116", "#fb766a"];     // chosen to stay apart from the fixed lines, colorblind views included
+  var GRAY = "#8d96a8";
+  var inputs = box.querySelectorAll("input[data-line]");
+  var more = box.querySelector("details.more");
+  var defaults = {};
+  var assigned = {};
+  inputs.forEach(function (input) { defaults[input.dataset.line] = input.checked; });
+
+  function isForecaster(id) { return /^f[0-9]+$/.test(id); }
+
+  function nextColor() {
+    var used = Object.values(assigned);
+    var free = COLORS.filter(function (color) { return used.indexOf(color) === -1; });
+    return free.length > 0 ? free[0] : GRAY;
+  }
+
+  function show() {
+    var chosen = [];
+    inputs.forEach(function (input) {
+      var id = input.dataset.line;
+      if (input.checked) { chosen.push(id); }
+      if (isForecaster(id)) {
+        if (!input.checked) { delete assigned[id]; }
+      }
+    });
+    inputs.forEach(function (input) {
+      var id = input.dataset.line;
+      var color = GRAY;
+      if (isForecaster(id) && input.checked) {
+        if (!assigned[id]) { assigned[id] = nextColor(); }
+        color = assigned[id];
+      }
+      document.querySelectorAll('svg g[data-line="' + id + '"]').forEach(function (group) {
+        group.classList.toggle("off", !input.checked);
+        if (isForecaster(id)) { group.style.color = color; }
+      });
+      if (isForecaster(id)) { input.parentNode.querySelector("i").style.background = color; }
+    });
+    return chosen;
+  }
+
+  function save(chosen) {
+    try {
+      localStorage.setItem(STORE, JSON.stringify({lines: chosen, open: more ? more.open : false, colors: assigned}));
+    } catch (e) { }
+  }
+
+  function changed() { save(show()); }
+
+  try {
+    var saved = JSON.parse(localStorage.getItem(STORE));
+    if (saved && saved.lines) {
+      inputs.forEach(function (input) { input.checked = saved.lines.indexOf(input.dataset.line) !== -1; });
+      assigned = saved.colors || {};
+      if (more) { more.open = !!saved.open; }
+    }
+  } catch (e) { }
+
+  inputs.forEach(function (input) { input.addEventListener("change", changed); });
+  if (more) { more.addEventListener("toggle", changed); }
+  var all = document.getElementById("lines-all");
+  if (all) {
+    all.addEventListener("click", function () {
+      inputs.forEach(function (input) { if (isForecaster(input.dataset.line)) { input.checked = true; } });
+      changed();
+    });
+  }
+  var reset = document.getElementById("lines-reset");
+  if (reset) {
+    reset.addEventListener("click", function () {
+      inputs.forEach(function (input) { input.checked = defaults[input.dataset.line]; });
+      changed();
+    });
+  }
+  show();
+})();
+</script>
+"""
+
 
 def display_names(roster):
     """netid -> what the page shows: the student's nickname, or 'Forecaster 07' (their roster position)."""
@@ -242,26 +328,110 @@ def live_chart(live, names):
 
     legend = []
     top = live.get("top_netid")
-    if past is not None and past.shape[1] > 0:
-        for netid in past.columns:
-            if netid != top:
-                parts.append(draw(past[netid], x, y, "var(--student)", 1.2))
-        legend.append('<span class="key"><i style="background:var(--student)"></i>Each forecaster (shown once the hour is over)</span>')
+    mine = live.get("future_netid")
+    if mine is None and past is not None:
+        for netid in live.get("instructor_netids", []):
+            if netid in past.columns:
+                mine = netid
+                break
+
+    def series_of(table, netid):
+        if table is not None and netid in table.columns:
+            return table[netid]
+        return None
+
+    def line_group(line_id, shown, content, color=""):
+        """One <g> per line, so the boxes above the chart can show or hide it. Ids are positions, never NetIDs."""
+        return ('<g class="line' + ("" if shown else " off") + '" data-line="' + line_id + '"'
+                + (' style="color:' + color + '"' if color else "") + ">" + content + "</g>")
+
+    def pick_box(line_id, shown, color, label):
+        return ('<label class="pick"><input type="checkbox" data-line="' + line_id + '"' + (" checked" if shown else "")
+                + '><i style="background:' + color + '"></i><span>' + html.escape(label) + "</span></label>")
+
+    # Every other forecaster stays hidden until someone checks the box: leaderboard order first, then anyone not ranked yet
+    roster_ids = {}
+    for netid in names:
+        roster_ids[netid] = "f" + str(len(roster_ids))
+    others = []
+    for netid in live.get("ranked_netids", []):
+        if netid != top and netid != mine and netid in roster_ids:
+            others.append(netid)
+    for table in [past, future_students]:
+        if table is not None:
+            for netid in table.columns:
+                if netid != top and netid != mine and netid in roster_ids and netid not in others:
+                    others.append(netid)
+    more_boxes = []
+    lines_drawn = 0
+    for netid in others:
+        content = ""
+        if series_of(past, netid) is not None:
+            content = draw(past[netid], x, y, "currentColor", 1.8, tooltip=names.get(netid, "Forecaster"))
+        if series_of(future_students, netid) is not None:
+            content = content + draw(future_students[netid], x, y, "currentColor", 1.8, tooltip=names.get(netid, "Forecaster"))
+        if content:
+            parts.append(line_group(roster_ids[netid], False, content, "#8d96a8"))
+            more_boxes.append(pick_box(roster_ids[netid], False, "#8d96a8", names.get(netid, "Forecaster")))
+            lines_drawn += 1
+
+    median_content = ""
+    if live.get("past_median") is not None:
+        median_content = draw(live["past_median"], x, y, "#d62828", 2.2, tooltip="Class median")
+    if live.get("future_median") is not None and len(live["future_median"]) > 0:
+        median_content = median_content + draw(live["future_median"], x, y, "#d62828", 2.2, ' stroke-dasharray="7 4"', tooltip="Class median")
+    baseline_boxes = []
+    if median_content:
+        parts.append(line_group("median", False, median_content))
+        baseline_boxes.append(pick_box("median", False, "#d62828", "Class median"))
+    baselines = [("baseline_last_week", "lastweek", "Same hour last week", "#2a9d8f", False),
+                 ("baseline_yesterday", "yesterday", "Same hour yesterday", "#7b2cbf", True)]   # the flat 6-hour average stays in the table only
+    default_boxes = []
+    for key, line_id, label, color, shown in baselines:
+        if live.get(key) is not None and live[key].notna().any():
+            parts.append(line_group(line_id, shown, draw(live[key], x, y, color, 2, ' stroke-dasharray="2 3"', tooltip="Baseline: " + label)))
+            box = pick_box(line_id, shown, color, label + " (dotted)")
+            if shown:
+                default_boxes.append(box)
+            else:
+                baseline_boxes.append(box)
     if live.get("isone") is not None and len(live["isone"]) > 0:
-        parts.append(draw(live["isone"], x, y, "var(--muted)", 1.8, ' stroke-dasharray="5 4"'))
-        legend.append('<span class="key"><i style="background:var(--muted)"></i>ISO New England (dashed)</span>')
-    if past is not None and top in past.columns:
-        parts.append(draw(past[top], x, y, "#1f6feb", 2.6))
-        legend.append('<span class="key"><i style="background:#1f6feb"></i>#1 on the leaderboard: ' + html.escape(names.get(top, "Forecaster")) + "</span>")
-    if live.get("past_median") is not None and past is not None and past.shape[1] >= 2:
-        parts.append(draw(live["past_median"], x, y, "#d62828", 2.6))
-        legend.append('<span class="key"><i style="background:#d62828"></i>Class median</span>')
+        parts.append(line_group("iso", True, draw(live["isone"], x, y, "var(--muted)", 2, ' stroke-dasharray="5 4"', tooltip="ISO New England")))
+        default_boxes.insert(0, pick_box("iso", True, "var(--muted)", "ISO New England (dashed)"))
+    if top is not None and top != mine:
+        name = names.get(top, "Forecaster")
+        content = ""
+        if series_of(past, top) is not None:
+            content = draw(past[top], x, y, "#1f6feb", 2.6, tooltip=name)
+        if series_of(future_students, top) is not None:
+            content = content + draw(future_students[top], x, y, "#1f6feb", 2.6, ' stroke-dasharray="7 4"', tooltip=name)
+        if content:
+            parts.append(line_group("top", True, content))
+            default_boxes.insert(1, pick_box("top", True, "#1f6feb", "#1 student: " + name))
+    if mine is not None:
+        name = names.get(mine, "Dr. Dave")
+        content = ""
+        if series_of(past, mine) is not None:
+            content = draw(past[mine], x, y, "var(--gold)", 2.6, tooltip=name)
+        if live.get("future") is not None and len(live["future"]) > 0:
+            content = content + draw(live["future"], x, y, "var(--gold)", 2.6, ' stroke-dasharray="7 4"', tooltip=name)
+        if content:
+            parts.append(line_group("dave", True, content))
+            default_boxes.insert(1, pick_box("dave", True, "var(--gold)", name))
+    if live.get("actual") is not None and len(live["actual"]) > 0:
+        parts.append(line_group("actual", True, draw(live["actual"], x, y, "var(--ink)", 3, tooltip="Actual load")))
+        default_boxes.insert(0, pick_box("actual", True, "var(--ink)", "Actual load"))
+
+    picker = '<div class="picker" id="linepicker">' + "".join(default_boxes)
+    if len(baseline_boxes) + len(more_boxes) > 0:
+        picker = (picker + '<details class="more"><summary>Add others</summary><div class="morelist">' + "".join(baseline_boxes)
+                  + "".join(more_boxes) + '</div><div class="morebuttons">')
+        if lines_drawn > 0:
+            picker = picker + '<button type="button" id="lines-all">Add all ' + str(lines_drawn) + " forecasters</button>"
+        picker = picker + '<button type="button" id="lines-reset">Back to the defaults</button></div></details>'
+    picker = picker + "</div>"
+
     if future_students is not None and future_students.shape[1] > 0:
-        for netid in future_students.columns:
-            parts.append(draw(future_students[netid], x, y, "#8d96a8", 1.5, ' opacity="0.9"',
-                              tooltip=names.get(netid, "Forecaster")))
-        legend.append('<span class="key"><i style="background:#8d96a8"></i>Each student&rsquo;s next 24 hours '
-                      "(hover a line for the nickname)</span>")
         # How many students sent the exact same forecast (usually the default Lab 5 champion)?
         groups = {}
         for netid in future_students.columns:
@@ -272,22 +442,6 @@ def live_chart(live, names):
             same_note = (str(biggest) + " of " + str(future_students.shape[1]) + " students sent the exact same 24 hours "
                          "(the default Lab 5 model), so their lines sit on top of each other. Change one thing in Lab 5 "
                          "Part 5 or 6, re-run 7a to 7d, and get a line of your own.")
-    if live.get("future_median") is not None and len(live["future_median"]) > 0:
-        parts.append(draw(live["future_median"], x, y, "#d62828", 2.6, ' stroke-dasharray="7 4"', tooltip="Class median"))
-        legend.append('<span class="key"><i style="background:#d62828"></i>Class median, next 24 hours (dashed)</span>')
-    if live.get("future") is not None and len(live["future"]) > 0:
-        color = "#d62828" if live.get("future_label", "").startswith("Class") else "var(--gold)"
-        parts.append(draw(live["future"], x, y, color, 2.6, ' stroke-dasharray="7 4"'))
-        legend.append('<span class="key"><i style="background:' + color + '"></i>' + html.escape(live.get("future_label", "")) + " (dashed)</span>")
-    baselines = [("baseline_yesterday", "Same hour yesterday", "#7b2cbf", ' stroke-dasharray="2 3"'),
-                 ("baseline_last_week", "Same hour last week", "#2a9d8f", ' stroke-dasharray="2 3"')]   # the flat 6-hour average stays in the table only
-    for key, label, color, dash in baselines:
-        if live.get(key) is not None and live[key].notna().any():
-            parts.append(draw(live[key], x, y, color, 1.8, dash, tooltip="Baseline: " + label))
-            legend.append('<span class="key"><i style="background:' + color + '"></i>Baseline: ' + label + " (dotted)</span>")
-    if live.get("actual") is not None and len(live["actual"]) > 0:
-        parts.append(draw(live["actual"], x, y, "var(--ink)", 3))
-        legend.append('<span class="key"><i style="background:var(--ink)"></i>Actual load</span>')
 
     # Weather panel: temperature (line) and chance of rain (bars)
     temps = []
@@ -364,7 +518,7 @@ def live_chart(live, names):
     parts.append("</svg>")
     if same_note:
         legend.append('<span class="key" style="flex-basis:100%"><b>Same model?</b> ' + html.escape(same_note) + "</span>")
-    return "".join(parts), "".join(legend)
+    return "".join(parts), "".join(legend), picker
 
 
 def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None):
@@ -420,12 +574,12 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     chart_svg, chart_legend = skill_chart(by_lead, board, names, instructors)
     live_card = ""
     if live is not None:
-        live_svg, live_legend = live_chart(live, names)
+        live_svg, live_legend, live_picker = live_chart(live, names)
         if live_svg:
             live_card = """<div class="card"><h2>The last 24 hours and the next 24</h2>
 <p class="note" style="margin-top:0">""" + weather_summary(live) + """</p>
-""" + live_svg + '<div class="legend">' + live_legend + """</div>
-<p class="note">On the left, gray lines are each forecaster's latest call for an hour, made before it began. For Lab 5 the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model compares before the hour arrives (hover a line for its nickname). A forecast counts only for hours that start after the collector first sees it, so a late or backdated forecast scores nothing.</p></div>
+""" + live_picker + live_svg + '<div class="legend">' + live_legend + """</div>
+<p class="note">Check a box to show a line and uncheck it to hide it. Add others lists the rest of the class in leaderboard order, plus the class median and same hour last week. On the left, each forecaster's line is their latest call for an hour, made before it began. For Lab 5 the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model compares before the hour arrives (hover a line for its nickname). A forecast counts only for hours that start after the collector first sees it, so a late or backdated forecast scores nothing.</p></div>
 """
     waiting_note = ""
     if waiting > 0:
@@ -511,6 +665,17 @@ svg .rain { fill:var(--rain); opacity:.7; }
 .key i { display:inline-block; width:14px; height:4px; border-radius:2px; margin-right:6px; vertical-align:middle; }
 ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.forecasting { columns: 1; } }
+svg .off { display:none; }
+.picker { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; margin:10px 0 8px; font-size:13px; }
+.pick { cursor:pointer; display:inline-flex; align-items:center; min-height:24px; }
+.pick input { margin:0 6px 0 0; }
+.pick i { display:inline-block; width:14px; height:4px; border-radius:2px; margin-right:6px; flex:none; }
+.more { flex-basis:100%; }
+.more summary { cursor:pointer; color:var(--navy); font-weight:600; }
+.morelist { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:2px 16px; margin-top:6px; }
+.morebuttons { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.morebuttons button { font:inherit; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:6px;
+                      padding:3px 10px; cursor:pointer; }
 </style></head>
 <body><main>
 <h1>Connecticut Load Forecast Leaderboard</h1>
@@ -525,7 +690,7 @@ ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.
 <tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
 """ + live_now + """
 """ + live_card + """<div class="card"><h2>Skill by hours ahead</h2>
-<p class="note" style="margin-top:0">Above 0% = better than "same hour yesterday" at that many hours ahead. Far-ahead hours are harder, so they count as much as next-hour ones. Lines: #1 on the leaderboard, the middle of the class (the median student at each hour ahead), last place, Dr. Dave's practice model and ISO New England.</p>
+<p class="note" style="margin-top:0">Above 0% = better than "same hour yesterday" at that many hours ahead. Far-ahead hours are harder, so they count as much as next-hour ones. Lines: #1 on the leaderboard, the middle of the class (the median student at each hour ahead), last place, Dr. Dave's model and ISO New England.</p>
 """ + chart_svg + '<div class="legend">' + chart_legend + """</div></div>
 
 <div class="card"><h2>How it's scored</h2><ul>
@@ -557,6 +722,6 @@ ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.
 </tbody></table></div>
 <p class="note">Over many hours the lowest score goes to the range that holds about 80% of actual loads, no more, no less: honesty is the winning strategy. Watch your <b>Inside range</b> column: well under 80% means widen, well over means narrow. This is the CRPS (continuous ranked probability score) worked out from three percentiles, also called the weighted interval score, the score forecasting competitions use.</p>
 </div>
-<p class="note">Data: ISO New England (ISO Express), National Weather Service, Iowa State Mesonet. This page refreshes itself every 10 minutes.</p>
+<p class="note">Data: ISO New England (ISO Express), National Weather Service, Iowa State Mesonet. This page refreshes itself every 10 minutes.</p>""" + LINE_PICKER_SCRIPT + """
 </main></body></html>
 """
