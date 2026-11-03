@@ -521,7 +521,7 @@ def live_chart(live, names):
     return "".join(parts), "".join(legend), picker
 
 
-def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None):
+def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None, final=None):
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     has_range = board["range_coverage_pct"].notna().any()
@@ -627,6 +627,26 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 <tbody>""" + "".join(lab6_rows) + """</tbody></table></div>
 """
 
+    # Final project: the grading window, everyone on the same forecasts, missed ones filled with same hour yesterday
+    final_card = ""
+    if final is not None and len(final) > 0:
+        final_rows = []
+        for i in range(len(final)):
+            row = final.iloc[i]
+            css = ' class="top"' if i == 0 else ""
+            final_rows.append("<tr" + css + "><td>" + str(i + 1) + '</td><td class="name">' +
+                              html.escape(names.get(row["netid"], "Forecaster")) + '</td><td class="skill">' +
+                              number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
+                              number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
+                              "</td><td>" + number(row["live_pct"], 0, "%") + "</td><td>" + number(row["forecasts_missed"]) +
+                              "</td></tr>")
+        window = eastern(final["window_first_hour_utc"].iloc[0]) + " to " + eastern(final["window_last_hour_utc"].iloc[0])
+        final_card = """<div class="card scroll"><h2>Final project &middot; the grading window</h2>
+<p class="note" style="margin-top:0">Sat Nov 21 to Tue Dec 1, so far """ + window + """. Everyone is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your CRPS skill toward 0%. <b>Live</b> is the share of those forecasts you made. Scores use the live load; the final grade uses the official metered load.</p>
+<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th></tr></thead>
+<tbody>""" + "".join(final_rows) + """</tbody></table></div>
+"""
+
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="600">
@@ -683,7 +703,7 @@ svg .off { display:none; }
         str(len(students)) + """ forecaster""" + ("" if len(students) == 1 else "s") + """ scored &middot; forecasts made """ + \
         eastern(first) + " to " + eastern(last) + """</p>
 
-""" + lab6_card + """<div class="card scroll"><table>
+""" + final_card + lab6_card + """<div class="card scroll"><table>
 <thead><tr><th>Rank</th><th>Forecaster</th><th title="How much better than same hour yesterday, averaged over 1-6, 7-12, 13-18 and 19-24 hours ahead">Skill</th>
 <th>Avg miss (MW)</th><th>1&ndash;6 h</th><th>7&ndash;12 h</th><th>13&ndash;18 h</th><th>19&ndash;24 h</th><th>Beat ISO-NE?</th>""" + \
         range_heads + """<th title="The 2026 test-year MAE from your notebook (Lab 5 Part 7a), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th></tr></thead>

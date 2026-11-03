@@ -12,6 +12,8 @@
 #        class/model_cards.csv             one row per student: their live model card
 #        class/status_latest.csv           who is ok / not shared yet / no forecasts yet / stale
 #        class/status_history.csv          every hour's status, so you can see when someone stopped
+#        class/final_project_scores.csv    final project (A11): CRPS skill over the grading window, missed forecasts
+#                                          filled with same hour yesterday, and rubric row 1 points (private)
 # HTTP entrypoint: collect_http
 
 import io
@@ -45,6 +47,13 @@ LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead t
 INTERVAL_ALPHA = 0.2     # low/high are an 80% range: the 10th and 90th percentiles
 # Lab 6 table: range forecasts (low and high filled in) issued on or after this time, ranked by CRPS skill
 LAB6_START_UTC = os.getenv("LAB6_START_UTC", "2026-11-02T00:00:00Z")
+# Final project (A11) grading window: target hours from the first hour of FINAL_START to the last hour of FINAL_END,
+# Connecticut time. Every forecaster is graded on the SAME forecasts: each of those hours, 1 to 24 hours ahead. A
+# forecast they didn't make in time is filled with same hour yesterday (no range), so being down never helps.
+FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-21")
+FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-01")
+FINAL_SCORE_POINTS = 20       # rubric row 1: best CRPS skill in the class = 20 points, lowest = 0
+FILL_ISSUE_MINUTE = 20        # a filled forecast is treated as made at :20, when forecast-24h runs
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 
@@ -250,13 +259,14 @@ def leaderboard_row(name, rows, score_column, prediction_column):
     return row
 
 
-def build_leaderboard(client, mine, master, cards=None):
+def build_leaderboard(client, mine, master, cards=None, roster=None):
     actual = load_actuals(client)
     if actual is None:
-        return None, None, None
-    pairs = score_forecasts(master, actual, load_isone(client))
+        return None, None, None, None
+    isone = load_isone(client)
+    pairs = score_forecasts(master, actual, isone)
     if len(pairs) == 0:
-        return None, None, None
+        return None, None, None, None
     rows = []
     for netid, group in pairs.groupby("netid"):
         row = leaderboard_row(netid, group, "score", "predicted_load_mw")
@@ -302,7 +312,13 @@ def build_leaderboard(client, mine, master, cards=None):
     write_csv(mine, "class/leaderboard_by_lead.csv", by_lead.reset_index())
     write_csv(mine, "class/scored_forecasts.csv", pairs.drop(columns=["issued", "target"]))
     lab6 = build_lab6_board(mine, pairs)
-    return board, by_lead.reset_index(), lab6
+    final = None
+    if roster is not None:
+        try:                                  # a final-project problem never stops the leaderboard
+            final = build_final_board(mine, master, actual, isone, roster)
+        except Exception as err:
+            logging.error("Final project board: %s\n%s", err, traceback.format_exc())
+    return board, by_lead.reset_index(), lab6, final
 
 
 def build_lab6_board(mine, pairs):
@@ -321,6 +337,110 @@ def build_lab6_board(mine, pairs):
     lab6.insert(0, "rank", range(1, len(lab6) + 1))
     write_csv(mine, "class/leaderboard_lab6.csv", lab6)
     return lab6
+
+
+def final_window_hours(actual):
+    """The window's target hours (UTC) whose actual load is already in."""
+    first = pd.Timestamp(FINAL_START_LOCAL).tz_localize("America/New_York").tz_convert("UTC")
+    last = (pd.Timestamp(FINAL_END_LOCAL) + pd.Timedelta(hours=23)).tz_localize("America/New_York").tz_convert("UTC")
+    known = actual.index[~actual.index.duplicated(keep="last")]
+    return known[(known >= first) & (known <= last)].sort_values()
+
+
+def fill_missed(master, actual, netids, hours):
+    """Every forecaster's forecasts for the window: each target hour, 1 to 24 hours ahead, made at issue hour
+    target - lead. Their own forecast where it counted (seen in time, newest one that issue hour); same hour yesterday
+    where it didn't. Returns the forecast table to score, with a 'filled' column."""
+    grid = []
+    for lead in range(1, 25):
+        grid.append(pd.DataFrame({"target": hours, "lead_hours": lead, "issue_hour": hours - pd.Timedelta(hours=lead)}))
+    grid = pd.concat(grid, ignore_index=True)
+
+    made = master[master["predicted_load_mw"].notna()].copy()
+    made = made[seen_in_time(made)]
+    made["issued"] = pd.to_datetime(made["issued_at_utc"], utc=True)
+    made["target"] = pd.to_datetime(made["target_hour_utc"], utc=True)
+    made["issue_hour"] = made["issued"].dt.floor("h")
+    made = made.sort_values("issued").drop_duplicates(["netid", "issue_hour", "target"], keep="last")
+
+    # Same hour yesterday as of :20 in the issue hour, from load that was over by then (as the baseline is scored)
+    issued = grid["issue_hour"] + pd.Timedelta(minutes=FILL_ISSUE_MINUTE)
+    source = grid["target"] - pd.Timedelta(hours=24)
+    too_new = source + pd.Timedelta(hours=1) > issued
+    source = source.where(~too_new, source - pd.Timedelta(hours=24))
+    hourly = actual[~actual.index.duplicated(keep="last")]
+    grid["fill_mw"] = hourly.reindex(source).values
+    grid["fill_issued_at_utc"] = issued.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    tables = []
+    for netid in netids:
+        theirs = made[made["netid"] == netid].drop(columns=["lead_hours"], errors="ignore")
+        table = grid.merge(theirs, on=["issue_hour", "target"], how="left")
+        missed = table["predicted_load_mw"].isna()
+        table["netid"] = netid
+        table["filled"] = missed
+        table.loc[missed, "predicted_load_mw"] = table.loc[missed, "fill_mw"]
+        table.loc[missed, "issued_at_utc"] = table.loc[missed, "fill_issued_at_utc"]
+        table.loc[missed, "received_at_utc"] = table.loc[missed, "fill_issued_at_utc"]
+        table.loc[missed, "model_version"] = "missed"
+        table.loc[missed, "range_method"] = "missed"
+        for column in ["predicted_low_mw", "predicted_high_mw"]:
+            if column not in table.columns:
+                table[column] = np.nan
+            table.loc[missed, column] = np.nan
+        table["target_hour_utc"] = table["target"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        tables.append(table.drop(columns=["issued", "target", "issue_hour", "fill_mw", "fill_issued_at_utc"]))
+    return pd.concat(tables, ignore_index=True)
+
+
+def build_final_board(mine, master, actual, isone, roster):
+    """Final project (A11): CRPS skill over the grading window, with missed forecasts filled with same hour yesterday.
+    Writes class/final_project_scores.csv (private: NetIDs and rubric points). Returns the table without points."""
+    hours = final_window_hours(actual)
+    if len(hours) == 0:
+        return None
+    instructors = instructor_netids(roster)
+    netids = roster["netid"].tolist()
+    pairs = score_forecasts(fill_missed(master, actual, netids, hours), actual, isone)
+    if len(pairs) == 0:
+        return None
+    rows = []
+    for netid, group in pairs.groupby("netid"):
+        row = leaderboard_row(netid, group, "score", "predicted_load_mw")
+        made = group[~group["filled"].astype(bool)]
+        row["forecasts_expected"] = int(len(group))
+        row["forecasts_missed"] = int(group["filled"].astype(bool).sum())
+        row["live_pct"] = round(100 * len(made) / len(group), 1)
+        row["has_range"] = bool(made["inside_range"].notna().any())
+        row["instructor"] = netid in instructors
+        rows.append(row)
+    final = pd.DataFrame(rows).rename(columns={"score": "crps_mw", "skill_pct": "crps_skill_pct"})
+    final["window_first_hour_utc"] = hours[0].strftime("%Y-%m-%dT%H:%MZ")
+    final["window_last_hour_utc"] = hours[-1].strftime("%Y-%m-%dT%H:%MZ")
+
+    # Rubric row 1: 20 x (skill - lowest) / (highest - lowest) among students with a range; no range = 0 points.
+    # Second anchor (Dr. Dave's call): the lowest student who was live 90%+ of the window gets 0 (anyone below, 0).
+    graded = final[~final["instructor"] & final["has_range"] & final["crps_skill_pct"].notna()]
+    final["score_points"] = 0.0
+    final["score_points_live90_anchor"] = 0.0
+    if len(graded) > 0:
+        best = graded["crps_skill_pct"].max()
+        for anchor_column, pool in [("score_points", graded), ("score_points_live90_anchor", graded[graded["live_pct"] >= 90])]:
+            if len(pool) == 0:
+                continue
+            low = pool["crps_skill_pct"].min()
+            if best > low:
+                points = FINAL_SCORE_POINTS * (final["crps_skill_pct"] - low) / (best - low)
+            else:
+                points = FINAL_SCORE_POINTS * (final["crps_skill_pct"] >= best).astype(float)
+            eligible = ~final["instructor"] & final["has_range"]
+            final.loc[eligible, anchor_column] = points[eligible].clip(0, FINAL_SCORE_POINTS).round(1)
+    final.loc[final["instructor"], ["score_points", "score_points_live90_anchor"]] = np.nan
+    final = final.sort_values("crps_skill_pct", ascending=False, na_position="last")
+    final.insert(0, "rank", range(1, len(final) + 1))
+    final["updated_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    write_csv(mine, "class/final_project_scores.csv", final)
+    return final.drop(columns=["score_points", "score_points_live90_anchor"])
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -507,7 +627,7 @@ def run_once():
     leaderboard_rows = 0
     if len(tables) > 0 and ACTUALS_BUCKET:
         try:                                  # a leaderboard problem never stops the collecting
-            board, by_lead, lab6 = build_leaderboard(client, mine, master, card_by_netid)
+            board, by_lead, lab6, final = build_leaderboard(client, mine, master, card_by_netid, roster)
             if board is not None:
                 leaderboard_rows = int(len(board))
                 if PUBLIC_BUCKET:
@@ -517,7 +637,8 @@ def run_once():
                         live = build_live_chart(client, master, board, roster, now)
                     except Exception as err:
                         logging.error("Live chart: %s\n%s", err, traceback.format_exc())
-                    page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses, lab6=lab6)
+                    page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses, lab6=lab6,
+                                                  final=final)
                     blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
                     blob.cache_control = "public, max-age=60"
                     blob.upload_from_string(page, content_type="text/html; charset=utf-8")
