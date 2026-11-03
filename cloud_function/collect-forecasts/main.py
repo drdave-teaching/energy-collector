@@ -40,8 +40,10 @@ ACTUAL_LOAD_KEY = "energy/datasets/ct_load_5min_hourly_master.csv"     # live CT
 ISONE_FORECAST_KEY = "energy/datasets/isone_ct_forecast_master.csv"     # ISO New England's own CT forecast, every version
 WEATHER_FORECAST_KEY = "energy/datasets/bdl_weather_forecast_master.csv"  # NWS forecast for Bradley Airport, every hour
 WEATHER_OBS_KEY = "energy/datasets/bdl_weather_obs_master.csv"          # what the weather at Bradley actually was
-INSTRUCTOR_NICKNAME = "dr. dave"   # roster nicknames starting with this are Dr. Dave's practice models, not students
-SHOW_STUDENT_FUTURE = True   # Lab 5: everyone's next 24 hours are public. Set False for Lab 6 and the final project.
+# Course-specific settings come from env vars so a second class (OPIM 5509) can run its own copy of this function
+INSTRUCTOR_NICKNAME = os.getenv("INSTRUCTOR_NICKNAME", "dr. dave")   # roster nicknames starting with this are Dr. Dave's practice models, not students
+# Lab 5: everyone's next 24 hours are public. Set SHOW_STUDENT_FUTURE=false for Lab 6 and the final project.
+SHOW_STUDENT_FUTURE = os.getenv("SHOW_STUDENT_FUTURE", "true").strip().lower() in ["1", "true", "yes"]
 STALE_HOURS = 2          # newest forecast older than this = "stale" (their forecast-24h stopped)
 LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead times counts the same in the skill score
 INTERVAL_ALPHA = 0.2     # low/high are an 80% range: the 10th and 90th percentiles

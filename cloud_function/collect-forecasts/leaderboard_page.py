@@ -2,6 +2,7 @@
 # Nicknames only: NetIDs, buckets and the roster never leave the private collector bucket.
 
 import html
+import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -9,7 +10,9 @@ import numpy as np
 import pandas as pd
 
 EASTERN = ZoneInfo("America/New_York")
-INSTRUCTOR_NICKNAME = "dr. dave"     # roster nicknames starting with this are the instructor's models, not students
+INSTRUCTOR_NICKNAME = os.getenv("INSTRUCTOR_NICKNAME", "dr. dave")     # roster nicknames starting with this are the instructor's models, not students
+COURSE_LABEL = os.getenv("COURSE_LABEL", "OPIM 5512")     # shown under the page title
+RANGE_TABLE_LABEL = os.getenv("RANGE_TABLE_LABEL", "Lab 6")     # the range table's name ("Lab 6" in 5512)
 
 # The boxes above the live chart. A forecaster you add keeps its color until you uncheck it; the page's 10-minute refresh
 # keeps your choices in this browser only.
@@ -621,8 +624,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                              number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
                              number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
                              "</td><td>" + number(row["mae_mw"]) + "</td><td>" + number(row["hours_scored"]) + "</td></tr>")
-        lab6_card = """<div class="card scroll"><h2>Lab 6 &middot; Ranges, ranked by CRPS</h2>
-<p class="note" style="margin-top:0">Only forecasts with a low and a high, made since Lab 6 opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside.</p>
+        lab6_card = """<div class="card scroll"><h2>""" + html.escape(RANGE_TABLE_LABEL) + """ &middot; Ranges, ranked by CRPS</h2>
+<p class="note" style="margin-top:0">Only forecasts with a low and a high, made since """ + html.escape(RANGE_TABLE_LABEL) + """ opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside.</p>
 <table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Avg miss (MW)</th><th>Hours scored</th></tr></thead>
 <tbody>""" + "".join(lab6_rows) + """</tbody></table></div>
 """
@@ -699,7 +702,7 @@ svg .off { display:none; }
 </style></head>
 <body><main>
 <h1>Connecticut Load Forecast Leaderboard</h1>
-<p class="sub">OPIM 5512 &middot; updated """ + eastern(now.isoformat()) + """ (Eastern), every hour &middot; """ + \
+<p class="sub">""" + html.escape(COURSE_LABEL) + """ &middot; updated """ + eastern(now.isoformat()) + """ (Eastern), every hour &middot; """ + \
         str(len(students)) + """ forecaster""" + ("" if len(students) == 1 else "s") + """ scored &middot; forecasts made """ + \
         eastern(first) + " to " + eastern(last) + """</p>
 
