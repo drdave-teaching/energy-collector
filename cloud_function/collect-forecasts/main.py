@@ -44,6 +44,16 @@ WEATHER_OBS_KEY = "energy/datasets/bdl_weather_obs_master.csv"          # what t
 INSTRUCTOR_NICKNAME = os.getenv("INSTRUCTOR_NICKNAME", "dr. dave")   # roster nicknames starting with this are Dr. Dave's practice models, not students
 # Lab 5: everyone's next 24 hours are public. Set SHOW_STUDENT_FUTURE=false for Lab 6 and the final project.
 SHOW_STUDENT_FUTURE = os.getenv("SHOW_STUDENT_FUTURE", "true").strip().lower() in ["1", "true", "yes"]
+# OPIM 5509 (REQUIRE_KERAS=true): only forecasts made by forecast-24h-dl with a Keras network count. That function writes
+# energy/forecasts/run_summary.json (its name, the Keras version, the network's layers) every hour, and tags each
+# forecast row with one of the deep learning range methods. Anything else (a scikit-learn model from forecast-24h, a
+# missing summary) is not collected, and the student's status says why.
+REQUIRE_KERAS = os.getenv("REQUIRE_KERAS", "false").strip().lower() in ["1", "true", "yes"]
+RUN_SUMMARY_KEY = "energy/forecasts/run_summary.json"
+KERAS_RANGE_METHODS = ["none", "lstm_hrrr_runs", "lstm_quantiles", "lstm_quantiles_pooled"]
+# Where students ship a model and run the share cell (only shown in the private status table)
+SHIP_STEP = os.getenv("SHIP_STEP", "Lab 5 Part 7")
+SHARE_STEP = os.getenv("SHARE_STEP", "Lab 5 Part 7e")
 STALE_HOURS = 2          # newest forecast older than this = "stale" (their forecast-24h stopped)
 LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead times counts the same in the skill score
 INTERVAL_ALPHA = 0.2     # low/high are an 80% range: the 10th and 90th percentiles
@@ -86,6 +96,8 @@ def collect_one(client, netid, bucket_name, now):
     """Copy one student's forecasts. Returns (status row, forecasts table or None, model card dict or None)."""
     status = {"collected_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "netid": netid, "bucket": bucket_name,
               "status": "", "forecast_rows": 0, "newest_issued_utc": "", "model_version": "", "message": ""}
+    if REQUIRE_KERAS:
+        status["network"] = ""
     their_bucket = client.bucket(bucket_name)
     try:
         blob = their_bucket.blob(STUDENT_MASTER_KEY)
@@ -94,21 +106,44 @@ def collect_one(client, netid, bucket_name, now):
             for _ in client.list_blobs(bucket_name, prefix="energy/", max_results=1):
                 break
             status["status"] = "no_forecasts_yet"
-            status["message"] = "Shared, but no forecasts_master.csv yet (no model shipped, Lab 5 Part 7)."
+            status["message"] = "Shared, but no forecasts_master.csv yet (no model shipped, " + SHIP_STEP + ")."
             return status, None, None
         forecasts = pd.read_csv(io.BytesIO(blob.download_as_bytes()))
         card = None
         card_blob = their_bucket.blob(STUDENT_CARD_KEY)
         if card_blob.exists():
             card = json.loads(card_blob.download_as_text())
+        run_summary = None
+        if REQUIRE_KERAS:
+            summary_blob = their_bucket.blob(RUN_SUMMARY_KEY)
+            if summary_blob.exists():
+                run_summary = json.loads(summary_blob.download_as_text())
     except gexc.Forbidden:
         status["status"] = "not_shared"
-        status["message"] = "No read access yet: the student has not run the share cell (Lab 5 Part 7e)."
+        status["message"] = "No read access yet: the student has not run the share cell (" + SHARE_STEP + ")."
         return status, None, None
     except gexc.NotFound:
         status["status"] = "bucket_not_found"
         status["message"] = "No bucket with this name: check the roster."
         return status, None, None
+
+    if REQUIRE_KERAS:
+        layers = []
+        if run_summary is not None and run_summary.get("function") == "forecast-24h-dl":
+            layers = list(run_summary.get("layers", []))
+        if len(layers) == 0:
+            status["status"] = "not_keras"
+            status["message"] = ("No forecast-24h-dl run summary with a Keras network (energy/forecasts/run_summary.json): "
+                                 "deploy forecast-24h-dl, not forecast-24h, and ship a Keras model.")
+            return status, None, card
+        status["network"] = ", ".join(layers)
+        # Only rows made by forecast-24h-dl (a deep learning range method, "_nws" when it used the NWS weather)
+        base_method = forecasts["range_method"].astype(str).str.replace("_nws", "", regex=False)
+        forecasts = forecasts[base_method.isin(KERAS_RANGE_METHODS)].copy()
+        if len(forecasts) == 0:
+            status["status"] = "not_keras"
+            status["message"] = "No forecast rows from forecast-24h-dl in forecasts_master.csv yet."
+            return status, None, card
 
     forecasts.insert(0, "netid", netid)
     newest = pd.to_datetime(forecasts["issued_at_utc"], utc=True).max()

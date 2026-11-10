@@ -13,6 +13,8 @@ EASTERN = ZoneInfo("America/New_York")
 INSTRUCTOR_NICKNAME = os.getenv("INSTRUCTOR_NICKNAME", "dr. dave")     # roster nicknames starting with this are the instructor's models, not students
 COURSE_LABEL = os.getenv("COURSE_LABEL", "OPIM 5512")     # shown under the page title
 RANGE_TABLE_LABEL = os.getenv("RANGE_TABLE_LABEL", "Lab 6")     # the range table's name ("Lab 6" in 5512)
+TEST_MAE_SOURCE = os.getenv("TEST_MAE_SOURCE", "Lab 5 Part 7a")     # the notebook step that wrote test_mae_mw to the card
+SHOW_STUDENT_FUTURE = os.getenv("SHOW_STUDENT_FUTURE", "true").strip().lower() in ["1", "true", "yes"]
 
 # The boxes above the live chart. A forecaster you add keeps its color until you uncheck it; the page's 10-minute refresh
 # keeps your choices in this browser only.
@@ -576,13 +578,17 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                 instructors.append(str(roster["netid"].iloc[i]).strip().lower())
     chart_svg, chart_legend = skill_chart(by_lead, board, names, instructors)
     live_card = ""
+    future_note = ""
+    if SHOW_STUDENT_FUTURE:
+        future_note = ("For Lab 5 the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model "
+                       "compares before the hour arrives (hover a line for its nickname). ")
     if live is not None:
         live_svg, live_legend, live_picker = live_chart(live, names)
         if live_svg:
             live_card = """<div class="card"><h2>The last 24 hours and the next 24</h2>
 <p class="note" style="margin-top:0">""" + weather_summary(live) + """</p>
 """ + live_picker + live_svg + '<div class="legend">' + live_legend + """</div>
-<p class="note">Check a box to show a line and uncheck it to hide it. Add others lists the rest of the class in leaderboard order, plus the class median and same hour last week. On the left, each forecaster's line is their latest call for an hour, made before it began. For Lab 5 the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model compares before the hour arrives (hover a line for its nickname). A forecast counts only for hours that start after the collector first sees it, so a late or backdated forecast scores nothing.</p></div>
+<p class="note">Check a box to show a line and uncheck it to hide it. Add others lists the rest of the class in leaderboard order, plus the class median and same hour last week. On the left, each forecaster's line is their latest call for an hour, made before it began. """ + future_note + """A forecast counts only for hours that start after the collector first sees it, so a late or backdated forecast scores nothing.</p></div>
 """
     waiting_note = ""
     if waiting > 0:
@@ -709,7 +715,7 @@ svg .off { display:none; }
 """ + final_card + lab6_card + """<div class="card scroll"><table>
 <thead><tr><th>Rank</th><th>Forecaster</th><th title="How much better than same hour yesterday, averaged over 1-6, 7-12, 13-18 and 19-24 hours ahead">Skill</th>
 <th>Avg miss (MW)</th><th>1&ndash;6 h</th><th>7&ndash;12 h</th><th>13&ndash;18 h</th><th>19&ndash;24 h</th><th>Beat ISO-NE?</th>""" + \
-        range_heads + """<th title="The 2026 test-year MAE from your notebook (Lab 5 Part 7a), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th></tr></thead>
+        range_heads + """<th title="The 2026 test-year MAE from your notebook (""" + html.escape(TEST_MAE_SOURCE) + """), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th></tr></thead>
 <tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
 """ + live_now + """
 """ + live_card + """<div class="card"><h2>Skill by hours ahead</h2>
@@ -720,7 +726,7 @@ svg .off { display:none; }
 <li>Every hour your model forecasts the next 24 hours. Each forecast hour is scored once Connecticut's actual load for that hour is in.</li>
 <li><b>Avg miss</b> = average |actual &minus; your expected value|, in MW. The four columns split it by how far ahead you forecast.</li>
 <li><b>Skill</b> = how much smaller your miss is than "same hour yesterday" on the exact hours you forecast, worked out for 1&ndash;6, 7&ndash;12, 13&ndash;18 and 19&ndash;24 hours ahead and averaged. Rank is by skill, so joining late is no penalty.</li>
-<li><b>Test-year MAE</b> is the score your notebook gave your model on 2026 (Lab 5 Part 7a), using the weather that actually happened. Your live <b>Avg miss</b> is usually higher, because in production your model only has the weather <i>forecast</i>, which is wrong too. That gap is the price of forecasting the weather first.</li>
+<li><b>Test-year MAE</b> is the score your notebook gave your model on 2026 (""" + html.escape(TEST_MAE_SOURCE) + """), using the weather that actually happened. Your live <b>Avg miss</b> is usually higher, because in production your model only has the weather <i>forecast</i>, which is wrong too. That gap is the price of forecasting the weather first.</li>
 <li>The grey rows are simple forecasts to beat: <b>same hour yesterday</b> (the 0% line for skill), <b>same hour last week</b>, the <b>average of the last 6 hours</b> held flat for all 24 hours, and <b>ISO New England</b>, the grid operator's own forecast (the newest version published before each of yours).</li>
 <li>Actual load is ISO New England's live five-minute estimate for Connecticut, averaged per hour, so it can still shift a little.</li>
 </ul></div>

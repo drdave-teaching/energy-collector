@@ -79,6 +79,25 @@ table, the two baselines, skill by hours ahead and how it's scored. It shows **n
 column; a blank nickname shows as "Forecaster 07", their roster position). NetIDs, buckets and forecasts stay private.
 To rename someone, edit their nickname in the roster. Link it from HuskyCT.
 
+## OPIM 5509: a second leaderboard for the deep learning final project
+`setup_collector_5509.sh` deploys the same code a second time, as `collect-forecasts-5509` (every hour at :40), in the
+same project and with the same `collector` service account, so 5509 students share their bucket exactly like 5512
+students (FP1 Part 9 prints their roster line). It has its own roster and class tables (`gs://opim5509-collector-f26`)
+and its own public page (`https://storage.googleapis.com/opim5509-leaderboard-f26/index.html`), so LSTMs only compete
+with LSTMs. Its settings are env vars (the defaults are 5512's, so `collect-forecasts` is unchanged):
+
+| Env var | 5509 value | What it does |
+|---|---|---|
+| `REQUIRE_KERAS` | `true` | Only forecasts made by `forecast-24h-dl` count: the student's `energy/forecasts/run_summary.json` must name that function and list a Keras network, and only rows with a deep learning `range_method` are collected. Otherwise the status is `not_keras` and nothing is scored |
+| `COURSE_LABEL`, `RANGE_TABLE_LABEL` | `OPIM 5509 (deep learning)`, `Final Project Part 2` | Page labels |
+| `LAB6_START_UTC` | `2026-11-09T05:00:00Z` | Range table counts forecasts from the day the project opened |
+| `FINAL_START_LOCAL`, `FINAL_END_LOCAL` | `2026-11-26`, `2026-12-02` | The graded window (tentative) |
+| `SHOW_STUDENT_FUTURE` | `false` | Nobody sees anyone else's next 24 hours |
+| `SHIP_STEP`, `SHARE_STEP`, `TEST_MAE_SOURCE` | FP1 Part 8, FP1 Part 9, Part 7 | Where students ship, share and save their test score (status messages and page text) |
+
+Add 5509 students to `gs://opim5509-collector-f26/roster/roster.csv`; the status table also lists each student's
+network (`network` column).
+
 ## Cost and stopping
 One function run per hour reading about 30 small CSVs: well under $1 a month. To pause:
 `gcloud scheduler jobs pause collect-forecasts-hourly --location=us-central1`.
