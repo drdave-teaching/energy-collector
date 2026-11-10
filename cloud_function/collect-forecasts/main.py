@@ -57,6 +57,7 @@ SHARE_STEP = os.getenv("SHARE_STEP", "Lab 5 Part 7e")
 STALE_HOURS = 2          # newest forecast older than this = "stale" (their forecast-24h stopped)
 LEAD_BLOCKS = [(1, 6), (7, 12), (13, 18), (19, 24)]      # every block of lead times counts the same in the skill score
 INTERVAL_ALPHA = 0.2     # low/high are an 80% range: the 10th and 90th percentiles
+CLASS_MEDIAN_MIN = 3     # the class median row only counts an hour when at least this many students forecast it
 # Lab 6 table: range forecasts (low and high filled in) issued on or after this time, ranked by CRPS skill
 LAB6_START_UTC = os.getenv("LAB6_START_UTC", "2026-11-02T00:00:00Z")
 # Final project (A11) grading window: target hours from the first hour of FINAL_START to the last hour of FINAL_END,
@@ -296,6 +297,26 @@ def leaderboard_row(name, rows, score_column, prediction_column):
     return row
 
 
+def class_median_rows(pairs, common, roster):
+    """The whole class as one forecast: for each issue hour and target hour, the median of every student's newest
+    forecast made that hour (Dr. Dave's practice models left out). Scored like the baselines, on hours that are over,
+    so nobody can copy it. Returns rows for leaderboard_row, or None when too few students forecast."""
+    students = pairs
+    if roster is not None:
+        students = pairs[~pairs["netid"].isin(instructor_netids(roster))]
+    students = students.assign(issue_hour=students["issued"].dt.floor("h"))
+    students = students.sort_values("issued").drop_duplicates(["netid", "issue_hour", "target"], keep="last")
+    median = students.groupby(["issue_hour", "target"]).agg(class_median_mw=("predicted_load_mw", "median"),
+                                                           forecasters=("netid", "nunique")).reset_index()
+    median = median[median["forecasters"] >= CLASS_MEDIAN_MIN]
+    if len(median) == 0:
+        return None
+    rows = common.merge(median, on=["issue_hour", "target"], how="inner")
+    if len(rows) == 0:
+        return None
+    return rows.assign(class_median_abs_error_mw=(rows["class_median_mw"] - rows["actual_mw"]).abs())
+
+
 def build_leaderboard(client, mine, master, cards=None, roster=None):
     actual = load_actuals(client)
     if actual is None:
@@ -337,6 +358,10 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
     iso = common[common["isone_forecast_mw"].notna()]
     if len(iso) > 0:
         rows.append(leaderboard_row("BASELINE: ISO New England's forecast", iso, "isone_abs_error_mw", "isone_forecast_mw"))
+    median_rows = class_median_rows(pairs, common, roster)
+    if median_rows is not None:
+        rows.append(leaderboard_row("BASELINE: class median forecast (all students)", median_rows,
+                                    "class_median_abs_error_mw", "class_median_mw"))
 
     board = pd.DataFrame(rows).sort_values("skill_pct", ascending=False, na_position="last")
     board.insert(0, "rank", range(1, len(board) + 1))
