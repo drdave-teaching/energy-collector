@@ -45,7 +45,7 @@ rm -rf ~/energy-collector && git clone -q https://github.com/drdave-teaching/ene
 ENV_VARS="^@^COLLECTOR_BUCKET=${BUCKET}@ACTUALS_BUCKET=${ACTUALS_BUCKET}@PUBLIC_BUCKET=${PUBLIC_BUCKET}"
 ENV_VARS="${ENV_VARS}@COURSE_LABEL=OPIM 5509 (deep learning)@RANGE_TABLE_LABEL=Final Project Part 2"
 ENV_VARS="${ENV_VARS}@LAB6_START_UTC=2026-11-09T05:00:00Z@FINAL_START_LOCAL=2026-11-26@FINAL_END_LOCAL=2026-12-02"
-ENV_VARS="${ENV_VARS}@SHOW_STUDENT_FUTURE=false@REQUIRE_KERAS=true"
+ENV_VARS="${ENV_VARS}@SHOW_STUDENT_FUTURE=false@REQUIRE_KERAS=true@POINT_LABEL=Final Project Part 1@FORECAST_FUNCTION=forecast-24h-dl"
 ENV_VARS="${ENV_VARS}@SHIP_STEP=FP1 Part 8@SHARE_STEP=FP1 Part 9@TEST_MAE_SOURCE=your FP1 or FP2 notebook, Part 7"
 gcloud functions deploy "${FUNCTION}" --gen2 --region="${REGION}" --runtime=python312 \
   --source="${HOME}/energy-collector/cloud_function/collect-forecasts" --entry-point=collect_http \

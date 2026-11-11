@@ -15,6 +15,19 @@ COURSE_LABEL = os.getenv("COURSE_LABEL", "OPIM 5512")     # shown under the page
 RANGE_TABLE_LABEL = os.getenv("RANGE_TABLE_LABEL", "Lab 6")     # the range table's name ("Lab 6" in 5512)
 TEST_MAE_SOURCE = os.getenv("TEST_MAE_SOURCE", "Lab 5 Part 7a")     # the notebook step that wrote test_mae_mw to the card
 SHOW_STUDENT_FUTURE = os.getenv("SHOW_STUDENT_FUTURE", "true").strip().lower() in ["1", "true", "yes"]
+POINT_LABEL = os.getenv("POINT_LABEL", "Lab 5")     # the no-range assignment's name ("Lab 5" in 5512)
+SHIP_STEP = os.getenv("SHIP_STEP", "Lab 5 Part 7d")     # where a student ships a model
+SHARE_STEP = os.getenv("SHARE_STEP", "Lab 5 Part 7e")     # where a student shares the bucket
+FORECAST_FUNCTION = os.getenv("FORECAST_FUNCTION", "forecast-24h")     # the hourly function students run
+FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-21")
+FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-01")
+
+
+def day_words(day_text):
+    """'2026-11-21' -> 'Sat Nov 21'."""
+    day = pd.Timestamp(day_text)
+    return day.strftime("%a %b") + " " + str(day.day)
+
 
 # The boxes above the live chart. A forecaster you add keeps its color until you uncheck it; the page's 10-minute refresh
 # keeps your choices in this browser only.
@@ -580,7 +593,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     live_card = ""
     future_note = ""
     if SHOW_STUDENT_FUTURE:
-        future_note = ("For Lab 5 the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model "
+        future_note = ("For " + POINT_LABEL + " the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model "
                        "compares before the hour arrives (hover a line for its nickname). ")
     if live is not None:
         live_svg, live_legend, live_picker = live_chart(live, names)
@@ -596,8 +609,10 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
             " signed up and waiting for a first scored hour.</p>"
 
     # Who is forecasting right now (nicknames only), so a new forecaster sees their name before their first score
-    status_words = {"ok": "forecasting &#10003;", "stale": "stopped: check forecast-24h",
-                    "not_shared": "share pending (Lab 5 Part 7e)", "no_forecasts_yet": "no forecast yet (Lab 5 Part 7d)",
+    status_words = {"ok": "forecasting &#10003;", "stale": "stopped: check " + html.escape(FORECAST_FUNCTION),
+                    "not_shared": "share pending (" + html.escape(SHARE_STEP) + ")",
+                    "no_forecasts_yet": "no forecast yet (" + html.escape(SHIP_STEP) + ")",
+                    "not_keras": "not counted yet: needs a Keras model run by forecast-24h-dl",
                     "bucket_not_found": "bucket not found: ask Dr. Dave", "error": "collector error: ask Dr. Dave"}
     live_now = ""
     if statuses:
@@ -651,7 +666,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                               "</td></tr>")
         window = eastern(final["window_first_hour_utc"].iloc[0]) + " to " + eastern(final["window_last_hour_utc"].iloc[0])
         final_card = """<div class="card scroll"><h2>Final project &middot; the grading window</h2>
-<p class="note" style="margin-top:0">Sat Nov 21 to Tue Dec 1, so far """ + window + """. Everyone is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your CRPS skill toward 0%. <b>Live</b> is the share of those forecasts you made. Scores use the live load; the final grade uses the official metered load.</p>
+<p class="note" style="margin-top:0">""" + day_words(FINAL_START_LOCAL) + " to " + day_words(FINAL_END_LOCAL) + """, so far """ + window + """. Everyone is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your CRPS skill toward 0%. <b>Live</b> is the share of those forecasts you made. Scores use the live load; the final grade uses the official metered load.</p>
 <table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th></tr></thead>
 <tbody>""" + "".join(final_rows) + """</tbody></table></div>
 """
@@ -731,20 +746,20 @@ svg .off { display:none; }
 <li>Actual load is ISO New England's live five-minute estimate for Connecticut, averaged per hour, so it can still shift a little.</li>
 </ul></div>
 
-<div class="card"><h2>Scoring a range: low, expected and high, the CRPS (Lab 6 and the final project)</h2>
+<div class="card"><h2>Scoring a range: low, expected and high, the CRPS (""" + html.escape(RANGE_TABLE_LABEL) + """ and the final project)</h2>
 <p style="margin:0 0 8px">Your low and high are your 10th and 90th percentiles: about 8 hours in 10 should land between them. Every forecast hour gets one score, in MW, lower is better:</p>
 <p style="margin:0 0 8px;text-align:center"><b>CRPS = ( 0.5 &times; |actual &minus; expected| + 0.1 &times; width + 1 &times; outside ) &divide; 1.5</b></p>
 <ul style="margin-bottom:10px">
 <li><b>width</b> = high &minus; low. <b>outside</b> = how many MW the actual fell outside your range (0 when it lands inside).</li>
 <li>A MW outside costs <b>10 times</b> a MW of width. Wide is safe but adds up; too narrow is cheap until the actual gets out.</li>
-<li>With no range (low = expected = high) the score is exactly your Avg miss, |actual &minus; expected|, the Lab 5 score. So everyone ranks on one scale.</li>
+<li>With no range (low = expected = high) the score is exactly your Avg miss, |actual &minus; expected|, the """ + html.escape(POINT_LABEL) + """ score. So everyone ranks on one scale.</li>
 </ul>
 <p style="margin:0 0 6px">Each hourly run sends <b>24 rows</b>, one per hour ahead, each with its own low, expected and high. At 2:20 p.m. your model forecasts 3 p.m. today through 2 p.m. tomorrow. When one of those hours is over, that row gets scored, and your score is the average over every row of every run. Far-ahead rows are harder, so an honest range is usually wider for them.</p>
 <p style="margin:0 0 6px">Take one of those rows: <b>1 p.m. tomorrow</b>, 23 hours ahead. The actual load turns out to be 3,100 MW. Four forecasters all expected 3,000 MW, so all four missed by 100 MW, but their ranges differ:</p>
 <div class="scroll"><table style="min-width:640px">
 <thead><tr><th style="text-align:left">Forecaster</th><th>Low</th><th>High</th><th>Width</th><th>Outside</th><th>Score</th></tr></thead>
 <tbody>
-<tr><td class="name">No range (Lab 5)</td><td>3,000</td><td>3,000</td><td>0</td><td>100</td><td>(50 + 0 + 100) &divide; 1.5 = <b>100.0</b></td></tr>
+<tr><td class="name">No range (""" + html.escape(POINT_LABEL) + """)</td><td>3,000</td><td>3,000</td><td>0</td><td>100</td><td>(50 + 0 + 100) &divide; 1.5 = <b>100.0</b></td></tr>
 <tr><td class="name">Too narrow</td><td>2,980</td><td>3,020</td><td>40</td><td>80</td><td>(50 + 4 + 80) &divide; 1.5 = <b>89.3</b></td></tr>
 <tr class="top"><td class="name">Honest</td><td>2,850</td><td>3,200</td><td>350</td><td>0</td><td>(50 + 35 + 0) &divide; 1.5 = <b>56.7</b></td></tr>
 <tr><td class="name">Too wide</td><td>2,000</td><td>4,000</td><td>2,000</td><td>0</td><td>(50 + 200 + 0) &divide; 1.5 = <b>166.7</b></td></tr>
