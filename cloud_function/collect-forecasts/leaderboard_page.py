@@ -539,17 +539,51 @@ def live_chart(live, names):
     return "".join(parts), "".join(legend), picker
 
 
-def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None, final=None):
+TAB_SCRIPT = """<script>
+(function () {
+  var names = {"#lab5": "point", "#lab6": "range", "#final": "final", "#point": "point", "#range": "range"};
+  var start = "DEFAULT_TAB";
+  var saved = null;
+  try { saved = localStorage.getItem("leaderboard-tab"); } catch (e) {}
+  if (saved) { start = saved; }
+  if (names[window.location.hash]) { start = names[window.location.hash]; }
+  document.documentElement.classList.add("js");
+  function show(tab) {
+    var buttons = document.querySelectorAll(".tabs button");
+    for (var i = 0; i < buttons.length; i++) {
+      var on = buttons[i].getAttribute("data-tab") === tab;
+      buttons[i].classList.toggle("on", on);
+      buttons[i].setAttribute("aria-selected", on ? "true" : "false");
+    }
+    var panels = document.querySelectorAll(".tabpanel");
+    for (var j = 0; j < panels.length; j++) {
+      panels[j].classList.toggle("on", panels[j].getAttribute("data-panel") === tab);
+    }
+    try { localStorage.setItem("leaderboard-tab", tab); } catch (e) {}
+  }
+  var all = document.querySelectorAll(".tabs button");
+  for (var k = 0; k < all.length; k++) {
+    all[k].addEventListener("click", function () { show(this.getAttribute("data-tab")); });
+  }
+  show(start);
+})();
+</script>
+"""
+
+
+def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None, final=None, point=None):
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
-    has_range = board["range_coverage_pct"].notna().any()
+    # The point tab (Lab 5) shows only forecasts without a range when the collector sends them; otherwise everything
+    point_table = point if point is not None and len(point) > 0 else board
+    has_range = point_table["range_coverage_pct"].notna().any()
     students = board[~board["netid"].str.startswith("BASELINE")]
     first = board["first_issued_utc"].min()
     last = board["last_issued_utc"].max()
 
     rows = []
     rank = 0
-    for _, row in board.iterrows():
+    for _, row in point_table.iterrows():
         baseline = row["netid"].startswith("BASELINE")
         if baseline:
             label = row["netid"].replace("BASELINE: ", "")
@@ -579,6 +613,10 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
             test_cell = number(row["test_mae_mw"])
         cells.append("<td>" + test_cell + "</td>")
         cells.append("<td>" + number(row["hours_scored"]) + "</td>")
+        status_cell = "&ndash;"
+        if not baseline and "moved_to_range" in point_table.columns:
+            status_cell = "final: moved to " + html.escape(RANGE_TABLE_LABEL) if bool(row["moved_to_range"]) else "live"
+        cells.append("<td>" + status_cell + "</td>")
         rows.append("<tr" + css + ">" + "".join(cells) + "</tr>")
 
     range_heads = ""
@@ -651,6 +689,11 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 <tbody>""" + "".join(lab6_rows) + """</tbody></table></div>
 """
 
+    if lab6_card == "":
+        lab6_card = """<div class="card"><h2>""" + html.escape(RANGE_TABLE_LABEL) + """ &middot; Ranges, ranked by CRPS</h2>
+<p class="note" style="margin-top:0">No range forecasts scored yet. Ship a model with a low and a high, and your row shows up here within about two hours.</p></div>
+"""
+
     # Final project: the grading window, everyone on the same forecasts, missed ones filled with same hour yesterday
     final_card = ""
     if final is not None and len(final) > 0:
@@ -670,6 +713,35 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 <table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th></tr></thead>
 <tbody>""" + "".join(final_rows) + """</tbody></table></div>
 """
+
+    if final_card == "":
+        final_card = """<div class="card"><h2>Final project &middot; the grading window</h2>
+<p class="note" style="margin-top:0">Scoring starts """ + day_words(FINAL_START_LOCAL) + """ and runs to """ + day_words(FINAL_END_LOCAL) + """. Every forecaster is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead, ranked by CRPS skill. A forecast you don't make in time counts as same hour yesterday with no range, so keep your energy project running. Until then this tab stays empty; watch your Inside range on the """ + html.escape(RANGE_TABLE_LABEL) + """ tab.</p></div>
+"""
+    final_started = final is not None and len(final) > 0
+    default_tab = "final" if final_started else ("range" if lab6 is not None and len(lab6) > 0 else "point")
+    point_note = ""
+    if point is not None:
+        point_note = ("Only forecasts with no range (an expected value only). When you ship a range model, your row here "
+                      "stops changing: <b>final: moved to " + html.escape(RANGE_TABLE_LABEL) + "</b> means your " +
+                      html.escape(POINT_LABEL) + " result is kept as it was, and your new model is scored on the " +
+                      html.escape(RANGE_TABLE_LABEL) + " tab. Nothing you shipped is lost.")
+    point_card = """<div class="card scroll"><h2>""" + html.escape(POINT_LABEL) + """ &middot; Expected value, ranked by skill</h2>
+""" + ('<p class="note" style="margin:0 0 8px">' + point_note + "</p>" if point_note else "") + """<table>
+<thead><tr><th>Rank</th><th>Forecaster</th><th title="How much better than same hour yesterday, averaged over 1-6, 7-12, 13-18 and 19-24 hours ahead">Skill</th>
+<th>Avg miss (MW)</th><th>1&ndash;6 h</th><th>7&ndash;12 h</th><th>13&ndash;18 h</th><th>19&ndash;24 h</th><th>Beat ISO-NE?</th>""" + \
+        range_heads + """<th title="The 2026 test-year MAE from your notebook (""" + html.escape(TEST_MAE_SOURCE) + """), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th><th>Status</th></tr></thead>
+<tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
+"""
+    tabs = """<div class="tabs" role="tablist">
+<button role="tab" data-tab="point">""" + html.escape(POINT_LABEL) + """ &middot; expected value</button>
+<button role="tab" data-tab="range">""" + html.escape(RANGE_TABLE_LABEL) + """ &middot; ranges</button>
+<button role="tab" data-tab="final">Final project</button>
+</div>
+<section class="tabpanel" data-panel="point">""" + point_card + """</section>
+<section class="tabpanel" data-panel="range">""" + lab6_card + """</section>
+<section class="tabpanel" data-panel="final">""" + final_card + """</section>
+""" + TAB_SCRIPT.replace("DEFAULT_TAB", default_tab)
 
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -710,6 +782,11 @@ svg .rain { fill:var(--rain); opacity:.7; }
 ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
 ul.forecasting { columns: 2; column-gap: 32px; } @media (max-width: 600px) { ul.forecasting { columns: 1; } }
 svg .off { display:none; }
+.tabs { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px; }
+.tabs button { font:inherit; font-weight:600; color:var(--navy); background:var(--card); border:1px solid var(--line);
+               border-radius:999px; padding:6px 16px; cursor:pointer; min-height:36px; }
+.tabs button.on { background:var(--navy); color:var(--card); border-color:var(--navy); }
+html.js .tabpanel { display:none; } html.js .tabpanel.on { display:block; }
 .picker { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; margin:10px 0 8px; font-size:13px; }
 .pick { cursor:pointer; display:inline-flex; align-items:center; min-height:24px; }
 .pick input { margin:0 6px 0 0; }
@@ -727,12 +804,7 @@ svg .off { display:none; }
         str(len(students)) + """ forecaster""" + ("" if len(students) == 1 else "s") + """ scored &middot; forecasts made """ + \
         eastern(first) + " to " + eastern(last) + """</p>
 
-""" + final_card + lab6_card + """<div class="card scroll"><table>
-<thead><tr><th>Rank</th><th>Forecaster</th><th title="How much better than same hour yesterday, averaged over 1-6, 7-12, 13-18 and 19-24 hours ahead">Skill</th>
-<th>Avg miss (MW)</th><th>1&ndash;6 h</th><th>7&ndash;12 h</th><th>13&ndash;18 h</th><th>19&ndash;24 h</th><th>Beat ISO-NE?</th>""" + \
-        range_heads + """<th title="The 2026 test-year MAE from your notebook (""" + html.escape(TEST_MAE_SOURCE) + """), using the weather that actually happened">Test-year MAE</th><th>Hours scored</th></tr></thead>
-<tbody>""" + "".join(rows) + """</tbody></table>""" + waiting_note + """</div>
-""" + live_now + """
+""" + tabs + live_now + """
 """ + live_card + """<div class="card"><h2>Skill by hours ahead</h2>
 <p class="note" style="margin-top:0">Above 0% = better than "same hour yesterday" at that many hours ahead. Far-ahead hours are harder, so they count as much as next-hour ones. Lines: #1 on the leaderboard, the middle of the class (the median student at each hour ahead), last place, Dr. Dave's model and ISO New England.</p>
 """ + chart_svg + '<div class="legend">' + chart_legend + """</div></div>

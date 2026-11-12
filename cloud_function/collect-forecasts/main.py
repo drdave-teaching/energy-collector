@@ -317,14 +317,8 @@ def class_median_rows(pairs, common, roster):
     return rows.assign(class_median_abs_error_mw=(rows["class_median_mw"] - rows["actual_mw"]).abs())
 
 
-def build_leaderboard(client, mine, master, cards=None, roster=None):
-    actual = load_actuals(client)
-    if actual is None:
-        return None, None, None, None
-    isone = load_isone(client)
-    pairs = score_forecasts(master, actual, isone)
-    if len(pairs) == 0:
-        return None, None, None, None
+def rank_board(pairs, cards=None, roster=None):
+    """Students + baseline rows for one set of scored forecasts, ranked by skill vs same hour yesterday."""
     rows = []
     for netid, group in pairs.groupby("netid"):
         row = leaderboard_row(netid, group, "score", "predicted_load_mw")
@@ -366,6 +360,37 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
     board = pd.DataFrame(rows).sort_values("skill_pct", ascending=False, na_position="last")
     board.insert(0, "rank", range(1, len(board) + 1))
     board["updated_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    return board
+
+
+def build_point_board(mine, pairs, cards=None, roster=None):
+    """Lab 5 tab (POINT_LABEL): only forecasts WITHOUT a range (the expected-value models). A student who ships a
+    range model stops adding rows here, so their Lab 5 result stays as it was; 'moved_to_range' says so."""
+    point = pairs[pairs["inside_range"].isna()]
+    if len(point) == 0:
+        return None
+    board = rank_board(point, cards, roster)
+    ranged = pairs[pairs["inside_range"].notna()]
+    last_point = point.groupby("netid")["issued"].max()
+    first_range = ranged.groupby("netid")["issued"].min()
+    moved = []
+    for netid in board["netid"]:
+        moved.append(bool(netid in first_range.index and netid in last_point.index
+                          and first_range[netid] >= last_point[netid] - pd.Timedelta(hours=2)))
+    board["moved_to_range"] = moved
+    write_csv(mine, "class/leaderboard_lab5.csv", board)
+    return board
+
+
+def build_leaderboard(client, mine, master, cards=None, roster=None):
+    actual = load_actuals(client)
+    if actual is None:
+        return None, None, None, None, None
+    isone = load_isone(client)
+    pairs = score_forecasts(master, actual, isone)
+    if len(pairs) == 0:
+        return None, None, None, None, None
+    board = rank_board(pairs, cards, roster)
     write_csv(mine, "class/leaderboard.csv", board)
 
     by_lead = pairs.groupby(["netid", "lead_hours"]).agg(
@@ -374,13 +399,18 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
     write_csv(mine, "class/leaderboard_by_lead.csv", by_lead.reset_index())
     write_csv(mine, "class/scored_forecasts.csv", pairs.drop(columns=["issued", "target"]))
     lab6 = build_lab6_board(mine, pairs)
+    point = None
+    try:                                      # a Lab 5 tab problem never stops the leaderboard
+        point = build_point_board(mine, pairs, cards, roster)
+    except Exception as err:
+        logging.error("Point board: %s %s", err, traceback.format_exc())
     final = None
     if roster is not None:
         try:                                  # a final-project problem never stops the leaderboard
             final = build_final_board(mine, master, actual, isone, roster)
         except Exception as err:
             logging.error("Final project board: %s\n%s", err, traceback.format_exc())
-    return board, by_lead.reset_index(), lab6, final
+    return board, by_lead.reset_index(), lab6, final, point
 
 
 def build_lab6_board(mine, pairs):
@@ -689,7 +719,7 @@ def run_once():
     leaderboard_rows = 0
     if len(tables) > 0 and ACTUALS_BUCKET:
         try:                                  # a leaderboard problem never stops the collecting
-            board, by_lead, lab6, final = build_leaderboard(client, mine, master, card_by_netid, roster)
+            board, by_lead, lab6, final, point = build_leaderboard(client, mine, master, card_by_netid, roster)
             if board is not None:
                 leaderboard_rows = int(len(board))
                 if PUBLIC_BUCKET:
@@ -700,7 +730,7 @@ def run_once():
                     except Exception as err:
                         logging.error("Live chart: %s\n%s", err, traceback.format_exc())
                     page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses, lab6=lab6,
-                                                  final=final)
+                                                  final=final, point=point)
                     blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
                     blob.cache_control = "public, max-age=60"
                     blob.upload_from_string(page, content_type="text/html; charset=utf-8")
