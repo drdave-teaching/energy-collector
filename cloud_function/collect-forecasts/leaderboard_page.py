@@ -539,6 +539,198 @@ def live_chart(live, names):
     return "".join(parts), "".join(legend), picker
 
 
+RANGE_SCRIPT = """<script>
+(function () {
+  var buttons = document.querySelectorAll(".leadpick button");
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener("click", function () {
+      var lead = this.getAttribute("data-lead");
+      var card = this.closest(".card");
+      var mine = card.querySelectorAll(".leadpick button");
+      for (var j = 0; j < mine.length; j++) {
+        mine[j].classList.toggle("on", mine[j].getAttribute("data-lead") === lead);
+      }
+      var sets = card.querySelectorAll(".rangeset");
+      for (var k = 0; k < sets.length; k++) {
+        sets[k].classList.toggle("hidden", sets[k].getAttribute("data-lead") !== lead);
+      }
+    });
+  }
+  // Show: everyone (a grid) or one forecaster (one big chart); remembered on this device
+  function focus(card, who) {
+    var figures = card.querySelectorAll(".rangepanel");
+    for (var i = 0; i < figures.length; i++) {
+      figures[i].classList.toggle("hidden", who !== "all" && figures[i].getAttribute("data-name") !== who);
+    }
+    var sets = card.querySelectorAll(".rangeset");
+    for (var j = 0; j < sets.length; j++) {
+      sets[j].classList.toggle("solo", who !== "all");
+    }
+  }
+  var pickers = document.querySelectorAll(".leadpick select");
+  for (var p = 0; p < pickers.length; p++) {
+    var saved = null;
+    try { saved = localStorage.getItem("range-focus"); } catch (e) {}
+    if (saved && pickers[p].querySelector('option[value="' + saved + '"]')) {
+      pickers[p].value = saved;
+      focus(pickers[p].closest(".card"), saved);
+    }
+    pickers[p].addEventListener("change", function () {
+      focus(this.closest(".card"), this.value);
+      try { localStorage.setItem("range-focus", this.value); } catch (e) {}
+    });
+  }
+})();
+</script>
+"""
+
+
+def range_runs(index):
+    """Split a sorted list of hours into runs of consecutive hours (a gap breaks the shaded band)."""
+    runs = []
+    run = []
+    previous = None
+    for stamp in index:
+        if previous is not None and stamp - previous > pd.Timedelta(hours=1) and len(run) > 0:
+            runs.append(run)
+            run = []
+        run.append(stamp)
+        previous = stamp
+    if len(run) > 0:
+        runs.append(run)
+    return runs
+
+
+def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, bottom, ticks):
+    """One small SVG: the forecaster's low-to-high band (shaded), expected value (line), actual load (black),
+    and a red dot wherever the actual fell outside the range."""
+    parts = ['<svg viewBox="0 0 ' + str(width) + " " + str(height) + '" role="img" aria-label="' +
+             html.escape(name) + ' range forecast">']
+    for tick in ticks:
+        parts.append('<line x1="' + str(left) + '" x2="' + str(width - right) + '" y1="' + format(y(tick), ".1f") +
+                     '" y2="' + format(y(tick), ".1f") + '" class="grid"/>')
+        parts.append('<text x="' + str(left - 6) + '" y="' + format(y(tick) + 4, ".1f") + '" class="axis" text-anchor="end">'
+                     + format(tick / 1000, ".1f") + "k</text>")
+    labels = [chart["first"], chart["first"] + (chart["last"] - chart["first"]) / 2, chart["last"]]
+    anchors = ["start", "middle", "end"]
+    for stamp, anchor in zip(labels, anchors):
+        stamp = stamp.floor("h")
+        local = stamp.tz_convert(EASTERN)
+        hour = local.hour % 12
+        if hour == 0:
+            hour = 12
+        day_hour = local.strftime("%a ") + str(hour) + (" AM" if local.hour < 12 else " PM")
+        parts.append('<text x="' + format(x(stamp), ".1f") + '" y="' + str(height - 6) + '" class="axis" text-anchor="' +
+                     anchor + '">' + day_hour + "</text>")
+    low = item["low"].dropna()
+    high = item["high"].reindex(low.index)
+    for run in range_runs(list(low.index)):
+        upper = [format(x(t), ".1f") + "," + format(y(float(high[t])), ".1f") for t in run]
+        lower = [format(x(t), ".1f") + "," + format(y(float(low[t])), ".1f") for t in reversed(run)]
+        if len(run) == 1:
+            t = run[0]
+            parts.append('<line x1="' + format(x(t), ".1f") + '" x2="' + format(x(t), ".1f") + '" y1="' +
+                         format(y(float(high[t])), ".1f") + '" y2="' + format(y(float(low[t])), ".1f") +
+                         '" class="bandline"/>')
+        else:
+            parts.append('<polygon class="band" points="' + " ".join(upper + lower) + '"/>')
+    parts.append(draw(item["expected"].dropna(), x, y, "var(--navy)", 1.5))
+    parts.append(draw(chart["actual"], x, y, "var(--ink)", 2))
+    outside = item["inside"][item["inside"] == 0]
+    for t in outside.index:
+        if t in chart["actual"].index:
+            parts.append('<circle cx="' + format(x(t), ".1f") + '" cy="' + format(y(float(chart["actual"][t])), ".1f") +
+                         '" r="3" class="outside"/>')
+    # Hover any hour for its numbers, so a student can audit every scored hour
+    half = max(1.0, (x(chart["first"] + pd.Timedelta(hours=1)) - x(chart["first"])) / 2)
+    for t in chart["actual"].index:
+        local = t.tz_convert(EASTERN)
+        hour = local.hour % 12
+        if hour == 0:
+            hour = 12
+        words = local.strftime("%a ") + str(hour) + (" AM" if local.hour < 12 else " PM") + ": actual " + \
+            format(float(chart["actual"][t]), ",.0f") + " MW"
+        if t in low.index:
+            words = words + ", low " + format(float(low[t]), ",.0f") + ", expected " + \
+                format(float(item["expected"].get(t, np.nan)), ",.0f") + ", high " + format(float(high[t]), ",.0f") + \
+                (", inside" if item["inside"].get(t, 0) == 1 else ", OUTSIDE")
+        else:
+            words = words + ", no range forecast at this lead"
+        parts.append('<rect class="hit" x="' + format(x(t) - half, ".0f") + '" y="' + str(top) + '" width="' +
+                     format(2 * half, ".0f") + '" height="' + str(height - top - bottom) + '"><title>' + words +
+                     "</title></rect>")
+    parts.append("</svg>")
+    inside = item["inside"].dropna()
+    if len(inside) > 0:
+        summary = str(int(inside.sum())) + " of " + str(len(inside)) + " inside (" + format(100 * inside.mean(), ".0f") + "%)"
+        width_mw = (item["high"] - item["low"]).dropna()
+        summary = summary + " &middot; avg width " + format(width_mw.mean(), ",.0f") + " MW"
+    else:
+        summary = "no forecasts at this lead in the last " + str(len(chart["actual"])) + " hours"
+    return ('<figure class="rangepanel" data-name="' + html.escape(item["netid_key"]) + '"><figcaption><b>' + str(rank) + ". " + html.escape(name) + "</b><span>" + summary +
+            "</span></figcaption>" + "".join(parts) + "</figure>")
+
+
+def range_card(chart, names, title, intro):
+    """A card of small range charts (one per Lab 6 forecaster), with a 1 hour / 24 hours ahead switch."""
+    if chart is None:
+        return ""
+    width, height, left, right, top, bottom = 360, 170, 40, 8, 8, 22
+    values = [float(v) for v in chart["actual"].dropna()]
+    for lead in chart["by_lead"]:
+        for item in chart["by_lead"][lead]:
+            values.extend([float(v) for v in item["low"].dropna()])
+            values.extend([float(v) for v in item["high"].dropna()])
+    if len(values) == 0:
+        return ""
+    # One scale for every panel, so ranges compare at a glance; extreme ranges are clipped at the edges
+    actual_low = float(chart["actual"].min())
+    actual_high = float(chart["actual"].max())
+    pad = max(200.0, 0.6 * (actual_high - actual_low))
+    low = max(min(values), actual_low - pad)
+    high = min(max(values), actual_high + pad)
+    low = np.floor(low / 250) * 250
+    high = np.ceil(high / 250) * 250
+    step = 250 if high - low <= 1500 else 500
+    ticks = list(np.arange(low, high + 1, step))
+    span = (chart["last"] - chart["first"]) / pd.Timedelta(hours=1)
+
+    def x(stamp):
+        return left + ((stamp - chart["first"]) / pd.Timedelta(hours=1)) / max(span, 1) * (width - left - right)
+
+    def y(value):
+        value = min(max(value, low), high)
+        return top + (high - value) / (high - low) * (height - top - bottom)
+
+    leads = sorted(chart["by_lead"])
+    buttons = []
+    sets = []
+    for lead in leads:
+        on = lead == leads[0]
+        label = str(lead) + " hour ahead" if lead == 1 else str(lead) + " hours ahead"
+        buttons.append('<button type="button" data-lead="' + str(lead) + '"' + (' class="on"' if on else "") + ">" +
+                       label + "</button>")
+        panels = []
+        for rank, item in enumerate(chart["by_lead"][lead], start=1):
+            item["netid_key"] = "f" + str(rank)          # never the NetID on the public page
+            panels.append(range_panel(item, rank, names.get(item["netid"], "Forecaster"), chart, x, y, width, height, left,
+                                      right, top, bottom, ticks))
+        sets.append('<div class="rangeset' + ("" if on else " hidden") + '" data-lead="' + str(lead) + '">' +
+                    "".join(panels) + "</div>")
+    options = ['<option value="all">Everyone (' + str(len(chart["by_lead"][leads[0]])) + ")</option>"]
+    for rank, item in enumerate(chart["by_lead"][leads[0]], start=1):
+        options.append('<option value="f' + str(rank) + '">' + str(rank) + ". " +
+                       html.escape(names.get(item["netid"], "Forecaster")) + "</option>")
+    return ('<div class="card"><h2>' + title + "</h2>" + '<p class="note" style="margin-top:0">' + intro + "</p>" +
+            '<div class="leadpick"><label class="focus">Show <select>' + "".join(options) + "</select></label>" +
+            "".join(buttons) + "</div>" +
+            '<div class="legend" style="margin:0 0 8px"><span class="key"><i style="background:var(--navy);opacity:.3;height:10px"></i>your range (low to high)</span>'
+            '<span class="key"><i style="background:var(--navy)"></i>your expected value</span>'
+            '<span class="key"><i style="background:var(--ink)"></i>actual load</span>'
+            '<span class="key"><i style="background:#d62828;width:8px;height:8px;border-radius:50%"></i>actual outside your range</span></div>'
+            + "".join(sets) + "</div>\n")
+
+
 TAB_SCRIPT = """<script>
 (function () {
   var names = {"#lab5": "point", "#lab6": "range", "#final": "final", "#point": "point", "#range": "range"};
@@ -557,7 +749,8 @@ TAB_SCRIPT = """<script>
     }
     var panels = document.querySelectorAll(".tabpanel");
     for (var j = 0; j < panels.length; j++) {
-      panels[j].classList.toggle("on", panels[j].getAttribute("data-panel") === tab);
+      var shows = (" " + panels[j].getAttribute("data-panel") + " ").indexOf(" " + tab + " ") >= 0;
+      panels[j].classList.toggle("on", shows);
     }
     try { localStorage.setItem("leaderboard-tab", tab); } catch (e) {}
   }
@@ -571,7 +764,8 @@ TAB_SCRIPT = """<script>
 """
 
 
-def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None, final=None, point=None):
+def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None, final=None, point=None,
+           ranges=None):
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     # The point tab (Lab 5) shows only forecasts without a range when the collector sends them; otherwise everything
@@ -716,8 +910,16 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 
     if final_card == "":
         final_card = """<div class="card"><h2>Final project &middot; the grading window</h2>
-<p class="note" style="margin-top:0">Scoring starts """ + day_words(FINAL_START_LOCAL) + """ and runs to """ + day_words(FINAL_END_LOCAL) + """. Every forecaster is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead, ranked by CRPS skill. A forecast you don't make in time counts as same hour yesterday with no range, so keep your energy project running. Until then this tab stays empty; watch your Inside range on the """ + html.escape(RANGE_TABLE_LABEL) + """ tab.</p></div>
+<p class="note" style="margin-top:0">Scoring starts """ + day_words(FINAL_START_LOCAL) + """ and runs to """ + day_words(FINAL_END_LOCAL) + """. Every forecaster is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead, ranked by CRPS skill. A forecast you don't make in time counts as same hour yesterday with no range, so keep your energy project running. Until then, the charts below show your ranges so far; watch your Inside range on the """ + html.escape(RANGE_TABLE_LABEL) + """ tab.</p></div>
 """
+    # Range charts: everyone's low-to-high band against the actual load, past hours only
+    range_intro = ("One chart per forecaster, in " + html.escape(RANGE_TABLE_LABEL) + " table order, all on the same scale: "
+                   "the last 48 hours that are over. The shaded band runs from your low to your high, and about 8 hours "
+                   "in 10 should land inside it; a red dot is an hour the actual load got out. Pick your nickname under "
+                   "<b>Show</b> to see just yours, switch between the forecast made 1 hour before each hour and the one "
+                   "made 24 hours before (far-ahead ranges should be wider), and hover any hour for its numbers. "
+                   "Only hours that are over are shown, so nobody can copy a range.")
+    range_section = range_card(ranges, names, "Your ranges, hour by hour", range_intro)
     final_started = final is not None and len(final) > 0
     default_tab = "final" if final_started else ("range" if lab6 is not None and len(lab6) > 0 else "point")
     point_note = ""
@@ -741,6 +943,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 <section class="tabpanel" data-panel="point">""" + point_card + """</section>
 <section class="tabpanel" data-panel="range">""" + lab6_card + """</section>
 <section class="tabpanel" data-panel="final">""" + final_card + """</section>
+<section class="tabpanel" data-panel="range final">""" + range_section + """</section>
 """ + TAB_SCRIPT.replace("DEFAULT_TAB", default_tab)
 
     return """<!doctype html>
@@ -787,6 +990,23 @@ svg .off { display:none; }
                border-radius:999px; padding:6px 16px; cursor:pointer; min-height:36px; }
 .tabs button.on { background:var(--navy); color:var(--card); border-color:var(--navy); }
 html.js .tabpanel { display:none; } html.js .tabpanel.on { display:block; }
+.leadpick { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 8px; }
+.leadpick button { font:inherit; font-size:13px; color:var(--navy); background:var(--card); border:1px solid var(--line);
+                   border-radius:6px; padding:4px 12px; cursor:pointer; min-height:32px; }
+.leadpick button.on { background:var(--navy); color:var(--card); border-color:var(--navy); }
+.rangeset { display:grid; grid-template-columns:repeat(auto-fill, minmax(290px, 1fr)); gap:14px 18px; }
+.rangeset.hidden, .rangepanel.hidden { display:none; }
+.rangeset.solo { grid-template-columns:minmax(0, 560px); }
+.rangepanel svg .axis { font-size:11px; }
+.rangepanel { margin:0; }
+.leadpick .focus { font-size:13px; display:inline-flex; align-items:center; gap:6px; margin-right:8px; }
+.leadpick select { font:inherit; font-size:13px; color:var(--ink); background:var(--card); border:1px solid var(--line);
+                   border-radius:6px; padding:4px 8px; min-height:32px; max-width:220px; }
+svg .hit { fill:transparent; } svg .hit:hover { fill:var(--ink); fill-opacity:.08; }
+.rangepanel figcaption { display:flex; flex-wrap:wrap; justify-content:space-between; gap:0 8px; font-size:13px; }
+.rangepanel figcaption span { color:var(--muted); }
+svg .band { fill:var(--navy); fill-opacity:.2; stroke:none; } svg .bandline { stroke:var(--navy); stroke-opacity:.35; stroke-width:4; }
+svg .outside { fill:#d62828; }
 .picker { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; margin:10px 0 8px; font-size:13px; }
 .pick { cursor:pointer; display:inline-flex; align-items:center; min-height:24px; }
 .pick input { margin:0 6px 0 0; }
@@ -838,6 +1058,6 @@ html.js .tabpanel { display:none; } html.js .tabpanel.on { display:block; }
 </tbody></table></div>
 <p class="note">Over many hours the lowest score goes to the range that holds about 80% of actual loads, no more, no less: honesty is the winning strategy. Watch your <b>Inside range</b> column: well under 80% means widen, well over means narrow. This is the CRPS (continuous ranked probability score) worked out from three percentiles, also called the weighted interval score, the score forecasting competitions use.</p>
 </div>
-<p class="note">Data: ISO New England (ISO Express), National Weather Service, Iowa State Mesonet. This page refreshes itself every 10 minutes.</p>""" + LINE_PICKER_SCRIPT + """
+<p class="note">Data: ISO New England (ISO Express), National Weather Service, Iowa State Mesonet. This page refreshes itself every 10 minutes.</p>""" + LINE_PICKER_SCRIPT + RANGE_SCRIPT + """
 </main></body></html>
 """

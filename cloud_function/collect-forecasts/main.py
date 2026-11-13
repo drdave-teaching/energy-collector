@@ -385,11 +385,11 @@ def build_point_board(mine, pairs, cards=None, roster=None):
 def build_leaderboard(client, mine, master, cards=None, roster=None):
     actual = load_actuals(client)
     if actual is None:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     isone = load_isone(client)
     pairs = score_forecasts(master, actual, isone)
     if len(pairs) == 0:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     board = rank_board(pairs, cards, roster)
     write_csv(mine, "class/leaderboard.csv", board)
 
@@ -399,6 +399,11 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
     write_csv(mine, "class/leaderboard_by_lead.csv", by_lead.reset_index())
     write_csv(mine, "class/scored_forecasts.csv", pairs.drop(columns=["issued", "target"]))
     lab6 = build_lab6_board(mine, pairs)
+    ranges = None
+    try:                                      # a range chart problem never stops the leaderboard
+        ranges = build_range_chart(pairs, lab6)
+    except Exception as err:
+        logging.error("Range chart: %s %s", err, traceback.format_exc())
     point = None
     try:                                      # a Lab 5 tab problem never stops the leaderboard
         point = build_point_board(mine, pairs, cards, roster)
@@ -410,7 +415,7 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
             final = build_final_board(mine, master, actual, isone, roster)
         except Exception as err:
             logging.error("Final project board: %s\n%s", err, traceback.format_exc())
-    return board, by_lead.reset_index(), lab6, final, point
+    return board, by_lead.reset_index(), lab6, final, point, ranges
 
 
 def build_lab6_board(mine, pairs):
@@ -429,6 +434,37 @@ def build_lab6_board(mine, pairs):
     lab6.insert(0, "rank", range(1, len(lab6) + 1))
     write_csv(mine, "class/leaderboard_lab6.csv", lab6)
     return lab6
+
+
+RANGE_CHART_HOURS = 48          # the range charts show the last 48 hours that are over
+RANGE_CHART_LEADS = [1, 24]     # one view per lead: the forecast made 1 hour before, and the one made 24 hours before
+
+
+def build_range_chart(pairs, lab6):
+    """Range charts for the Lab 6 and final project tabs: for every forecaster on the Lab 6 board, their low, expected
+    and high for each of the last 48 hours that are over, at 1 hour ahead and at 24 hours ahead, with the actual load.
+    Past hours only, so nobody can copy a range before its hour."""
+    if lab6 is None or len(lab6) == 0:
+        return None
+    ranged = pairs[pairs["inside_range"].notna()]
+    if len(ranged) == 0:
+        return None
+    last_hour = ranged["target"].max()
+    first_hour = last_hour - pd.Timedelta(hours=RANGE_CHART_HOURS - 1)
+    recent = ranged[ranged["target"] >= first_hour].sort_values("issued")
+    actual = pairs[pairs["target"] >= first_hour].groupby("target")["actual_mw"].last().sort_index()
+    by_lead = {}
+    for lead in RANGE_CHART_LEADS:
+        at_lead = recent[recent["lead_hours"] == lead]
+        forecasters = []
+        for netid in lab6["netid"]:
+            rows = at_lead[at_lead["netid"] == netid].drop_duplicates("target", keep="last").set_index("target").sort_index()
+            low = np.minimum(rows["predicted_low_mw"], rows["predicted_high_mw"])
+            high = np.maximum(rows["predicted_low_mw"], rows["predicted_high_mw"])
+            forecasters.append({"netid": netid, "low": low, "high": high, "expected": rows["predicted_load_mw"],
+                                "inside": rows["inside_range"]})
+        by_lead[lead] = forecasters
+    return {"first": first_hour, "last": last_hour, "actual": actual, "by_lead": by_lead}
 
 
 def final_window_hours(actual):
@@ -719,7 +755,7 @@ def run_once():
     leaderboard_rows = 0
     if len(tables) > 0 and ACTUALS_BUCKET:
         try:                                  # a leaderboard problem never stops the collecting
-            board, by_lead, lab6, final, point = build_leaderboard(client, mine, master, card_by_netid, roster)
+            board, by_lead, lab6, final, point, ranges = build_leaderboard(client, mine, master, card_by_netid, roster)
             if board is not None:
                 leaderboard_rows = int(len(board))
                 if PUBLIC_BUCKET:
@@ -730,7 +766,7 @@ def run_once():
                     except Exception as err:
                         logging.error("Live chart: %s\n%s", err, traceback.format_exc())
                     page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses, lab6=lab6,
-                                                  final=final, point=point)
+                                                  final=final, point=point, ranges=ranges)
                     blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
                     blob.cache_control = "public, max-age=60"
                     blob.upload_from_string(page, content_type="text/html; charset=utf-8")
