@@ -634,8 +634,8 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
                          '" class="bandline"/>')
         else:
             parts.append('<polygon class="band" points="' + " ".join(upper + lower) + '"/>')
-    parts.append(draw(item["expected"].dropna(), x, y, "var(--navy)", 1.5))
-    parts.append(draw(chart["actual"], x, y, "var(--ink)", 2))
+    parts.append(draw(item["expected"].dropna(), x, y, "var(--fc)", 1.5))
+    parts.append(draw(chart["actual"], x, y, "var(--ink)", 2.5))
     outside = item["inside"][item["inside"] == 0]
     for t in outside.index:
         if t in chart["actual"].index:
@@ -724,9 +724,9 @@ def range_card(chart, names, title, intro):
     return ('<div class="card"><h2>' + title + "</h2>" + '<p class="note" style="margin-top:0">' + intro + "</p>" +
             '<div class="leadpick"><label class="focus">Show <select>' + "".join(options) + "</select></label>" +
             "".join(buttons) + "</div>" +
-            '<div class="legend" style="margin:0 0 8px"><span class="key"><i style="background:var(--navy);opacity:.3;height:10px"></i>your range (low to high)</span>'
-            '<span class="key"><i style="background:var(--navy)"></i>your expected value</span>'
-            '<span class="key"><i style="background:var(--ink)"></i>actual load</span>'
+            '<div class="legend" style="margin:0 0 8px"><span class="key"><i style="background:var(--fc);opacity:.3;height:10px"></i>forecast range (low to high)</span>'
+            '<span class="key"><i style="background:var(--fc)"></i>forecast (expected value)</span>'
+            '<span class="key"><i style="background:var(--ink);height:5px"></i>actual load</span>'
             '<span class="key"><i style="background:#d62828;width:8px;height:8px;border-radius:50%"></i>actual outside your range</span></div>'
             + "".join(sets) + "</div>\n")
 
@@ -914,8 +914,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 """
     # Range charts: everyone's low-to-high band against the actual load, past hours only
     range_intro = ("One chart per forecaster, in " + html.escape(RANGE_TABLE_LABEL) + " table order, all on the same scale: "
-                   "the last 48 hours that are over. The shaded band runs from your low to your high, and about 8 hours "
-                   "in 10 should land inside it; a red dot is an hour the actual load got out. Pick your nickname under "
+                   "the last 48 hours that are over. Black is the actual load. Blue is the forecast: the line is the expected value and the shaded band runs "
+                   "from the low to the high, and about 8 hours in 10 should land inside it; a red dot is an hour the actual load got out. Pick your nickname under "
                    "<b>Show</b> to see just yours, switch between the forecast made 1 hour before each hour and the one "
                    "made 24 hours before (far-ahead ranges should be wider), and hover any hour for its numbers. "
                    "Only hours that are over are shown, so nobody can copy a range.")
@@ -952,10 +952,10 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 <title>Load Forecast Leaderboard</title>
 <style>
 :root { --bg:#f6f7fb; --card:#ffffff; --ink:#1c1c1e; --muted:#6b7280; --line:#e3e6ee; --navy:#0A1F44; --gold:#F2A900;
-        --baseline:#f1f3f8; --top:#fff6dc; --student:#b9c0cc; --rain:#9cc3ef; --future-bg:#f3f6fc; }
+        --baseline:#f1f3f8; --top:#fff6dc; --student:#b9c0cc; --rain:#9cc3ef; --future-bg:#f3f6fc; --fc:#1f6feb; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0d1220; --card:#161d2f; --ink:#e8eaf0;
         --muted:#9aa3b5; --line:#2a3350; --navy:#9db8ff; --baseline:#1d2539; --top:#3a3214; --student:#4a5470;
-        --rain:#2f5d8f; --future-bg:#1a2236; } }
+        --rain:#2f5d8f; --future-bg:#1a2236; --fc:#6ea8ff; } }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; }
 main { max-width:1040px; margin:0 auto; padding:28px 16px 48px; }
@@ -1003,9 +1003,9 @@ html.js .tabpanel { display:none; } html.js .tabpanel.on { display:block; }
 .leadpick select { font:inherit; font-size:13px; color:var(--ink); background:var(--card); border:1px solid var(--line);
                    border-radius:6px; padding:4px 8px; min-height:32px; max-width:220px; }
 svg .hit { fill:transparent; } svg .hit:hover { fill:var(--ink); fill-opacity:.08; }
-.rangepanel figcaption { display:flex; flex-wrap:wrap; justify-content:space-between; gap:0 8px; font-size:13px; }
-.rangepanel figcaption span { color:var(--muted); }
-svg .band { fill:var(--navy); fill-opacity:.2; stroke:none; } svg .bandline { stroke:var(--navy); stroke-opacity:.35; stroke-width:4; }
+.rangepanel figcaption { font-size:13px; }
+.rangepanel figcaption span { display:block; color:var(--muted); }
+svg .band { fill:var(--fc); fill-opacity:.22; stroke:none; } svg .bandline { stroke:var(--fc); stroke-opacity:.4; stroke-width:4; }
 svg .outside { fill:#d62828; }
 .picker { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; margin:10px 0 8px; font-size:13px; }
 .pick { cursor:pointer; display:inline-flex; align-items:center; min-height:24px; }
