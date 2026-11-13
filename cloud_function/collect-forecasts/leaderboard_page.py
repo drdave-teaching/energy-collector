@@ -19,8 +19,8 @@ POINT_LABEL = os.getenv("POINT_LABEL", "Lab 5")     # the no-range assignment's 
 SHIP_STEP = os.getenv("SHIP_STEP", "Lab 5 Part 7d")     # where a student ships a model
 SHARE_STEP = os.getenv("SHARE_STEP", "Lab 5 Part 7e")     # where a student shares the bucket
 FORECAST_FUNCTION = os.getenv("FORECAST_FUNCTION", "forecast-24h")     # the hourly function students run
-FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-21")
-FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-01")
+FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-29")
+FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-04")
 
 
 def day_words(day_text):

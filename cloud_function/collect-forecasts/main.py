@@ -63,8 +63,8 @@ LAB6_START_UTC = os.getenv("LAB6_START_UTC", "2026-11-02T00:00:00Z")
 # Final project (A11) grading window: target hours from the first hour of FINAL_START to the last hour of FINAL_END,
 # Connecticut time. Every forecaster is graded on the SAME forecasts: each of those hours, 1 to 24 hours ahead. A
 # forecast they didn't make in time is filled with same hour yesterday (no range), so being down never helps.
-FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-21")
-FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-01")
+FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-29")
+FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-04")
 FINAL_SCORE_POINTS = 20       # rubric row 1: best CRPS skill in the class = 20 points, lowest = 0
 FILL_ISSUE_MINUTE = 20        # a filled forecast is treated as made at :20, when forecast-24h runs
 
