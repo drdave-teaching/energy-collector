@@ -753,8 +753,8 @@ def model_label(card, range_method):
         return deep_learning_model_label(card, method)
     if method == "two_stage_quantile":
         return "Dr. Dave's two-stage model"
-    if method == "quantile_forest":
-        return "Final project: quantile forest (NWS)"
+    if method in ["range_model", "quantile_forest"]:
+        return "Final project (NWS)"
     if "starter" in str(card.get("champion", "")):
         return "Lab 5 starter" + (" + simple range" if method == "offsets_by_hour" else "")
     if method.startswith("hrrr_qrf_pooled"):
