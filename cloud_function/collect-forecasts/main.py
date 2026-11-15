@@ -753,6 +753,8 @@ def model_label(card, range_method):
         return deep_learning_model_label(card, method)
     if method == "two_stage_quantile":
         return "Dr. Dave's two-stage model"
+    if method == "quantile_forest":
+        return "Final project: quantile forest (NWS)"
     if "starter" in str(card.get("champion", "")):
         return "Lab 5 starter" + (" + simple range" if method == "offsets_by_hour" else "")
     if method.startswith("hrrr_qrf_pooled"):
@@ -796,7 +798,11 @@ def live_models(master, card_by_netid):
         version = str(rows["model_version"].iloc[-1]) if "model_version" in rows.columns else ""
         method = str(rows["range_method"].iloc[-1]) if "range_method" in rows.columns else "none"
         card = card_by_netid.get(netid)
-        entry = {"label": model_label(card, method), "version": version, "shipped_utc": "", "card_matches": True}
+        label = model_label(card, method)
+        name = str((card or {}).get("model_name", "")).strip()[:40]
+        if name and name.lower() != "nan":
+            label = label + ": " + name                  # the name the student typed in their model card
+        entry = {"label": label, "version": version, "shipped_utc": "", "card_matches": True}
         stamp = pd.to_datetime(version, utc=True, errors="coerce")
         if not pd.isna(stamp):
             entry["shipped_utc"] = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
