@@ -667,11 +667,11 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
         summary = summary + " &middot; avg width " + format(width_mw.mean(), ",.0f") + " MW"
     else:
         summary = "no forecasts at this lead in the last " + str(len(chart["actual"])) + " hours"
-    return ('<figure class="rangepanel" data-name="' + html.escape(item["netid_key"]) + '"><figcaption><b>' + str(rank) + ". " + html.escape(name) + "</b><span>" + summary +
+    return ('<figure class="rangepanel" data-name="' + html.escape(item["netid_key"]) + '"><figcaption><b>' + rank + html.escape(name) + "</b><span>" + summary +
             "</span></figcaption>" + "".join(parts) + "</figure>")
 
 
-def range_card(chart, names, title, intro):
+def range_card(chart, names, title, intro, instructors=()):
     """A card of small range charts (one per Lab 6 forecaster), with a 1 hour / 24 hours ahead switch."""
     if chart is None:
         return ""
@@ -703,6 +703,15 @@ def range_card(chart, names, title, intro):
         return top + (high - value) / (high - low) * (height - top - bottom)
 
     leads = sorted(chart["by_lead"])
+    # Students are numbered as in the table; Dr. Dave's models get no number
+    prefixes = []
+    student_rank = 0
+    for item in chart["by_lead"][leads[0]]:
+        if item["netid"] in instructors:
+            prefixes.append("")
+        else:
+            student_rank += 1
+            prefixes.append(str(student_rank) + ". ")
     buttons = []
     sets = []
     for lead in leads:
@@ -711,15 +720,15 @@ def range_card(chart, names, title, intro):
         buttons.append('<button type="button" data-lead="' + str(lead) + '"' + (' class="on"' if on else "") + ">" +
                        label + "</button>")
         panels = []
-        for rank, item in enumerate(chart["by_lead"][lead], start=1):
-            item["netid_key"] = "f" + str(rank)          # never the NetID on the public page
-            panels.append(range_panel(item, rank, names.get(item["netid"], "Forecaster"), chart, x, y, width, height, left,
+        for position, item in enumerate(chart["by_lead"][lead]):
+            item["netid_key"] = "f" + str(position + 1)          # never the NetID on the public page
+            panels.append(range_panel(item, prefixes[position], names.get(item["netid"], "Forecaster"), chart, x, y, width, height, left,
                                       right, top, bottom, ticks))
         sets.append('<div class="rangeset' + ("" if on else " hidden") + '" data-lead="' + str(lead) + '">' +
                     "".join(panels) + "</div>")
     options = ['<option value="all">Everyone (' + str(len(chart["by_lead"][leads[0]])) + ")</option>"]
-    for rank, item in enumerate(chart["by_lead"][leads[0]], start=1):
-        options.append('<option value="f' + str(rank) + '">' + str(rank) + ". " +
+    for position, item in enumerate(chart["by_lead"][leads[0]]):
+        options.append('<option value="f' + str(position + 1) + '">' + prefixes[position] +
                        html.escape(names.get(item["netid"], "Forecaster")) + "</option>")
     return ('<div class="card"><h2>' + title + "</h2>" + '<p class="note" style="margin-top:0">' + intro + "</p>" +
             '<div class="leadpick"><label class="focus">Show <select>' + "".join(options) + "</select></label>" +
@@ -764,6 +773,16 @@ TAB_SCRIPT = """<script>
 """
 
 
+def row_identity(netid, names, instructors):
+    """(label, rank cell, css) for a table row: baselines and Dr. Dave's models are grey and unranked."""
+    if str(netid).startswith("BASELINE"):
+        label = str(netid).replace("BASELINE: ", "")
+        return label[0].upper() + label[1:], "", ' class="baseline"'
+    if netid in instructors:
+        return names.get(netid, "Dr. Dave"), "", ' class="baseline instructor"'
+    return names.get(netid, "Forecaster"), "", ""
+
+
 def model_words(entry, short=False):
     """The live model in words: 'Lab 6D: tuned range, shipped Sat Nov 14, 7:44 PM'. A model card that doesn't match the
     newest forecasts gets a warning, so nobody wonders which model is being scored."""
@@ -780,6 +799,11 @@ def model_words(entry, short=False):
 def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None, final=None, point=None,
            ranges=None, models=None):
     models = models or {}
+    instructors = []
+    if "nickname" in roster.columns:
+        for i in range(len(roster)):
+            if str(roster["nickname"].iloc[i]).strip().lower().startswith(INSTRUCTOR_NICKNAME):
+                instructors.append(str(roster["netid"].iloc[i]).strip().lower())
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     # The point tab (Lab 5) shows only forecasts without a range when the collector sends them; otherwise everything
@@ -798,6 +822,10 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
             label = label[0].upper() + label[1:]
             rank_cell = ""
             css = ' class="baseline"'
+        elif row["netid"] in instructors:
+            label = names.get(row["netid"], "Dr. Dave")
+            rank_cell = ""
+            css = ' class="baseline instructor"'
         else:
             rank += 1
             label = names.get(row["netid"], "Forecaster")
@@ -822,7 +850,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
         cells.append("<td>" + test_cell + "</td>")
         cells.append("<td>" + number(row["hours_scored"]) + "</td>")
         status_cell = "&ndash;"
-        if not baseline and "moved_to_range" in point_table.columns:
+        if not baseline and row["netid"] not in instructors and "moved_to_range" in point_table.columns:
             status_cell = "final: moved to " + html.escape(RANGE_TABLE_LABEL) if bool(row["moved_to_range"]) else "live"
         cells.append("<td>" + status_cell + "</td>")
         rows.append("<tr" + css + ">" + "".join(cells) + "</tr>")
@@ -830,11 +858,6 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     range_heads = ""
     if has_range:
         range_heads = '<th title="Average CRPS per forecast hour, lower is better. With no range it equals Avg miss">CRPS</th>' +             '<th title="Share of hours the actual load fell between your low and high">Inside range</th><th>Range width (MW)</th>'
-    instructors = []
-    if "nickname" in roster.columns:
-        for i in range(len(roster)):
-            if str(roster["nickname"].iloc[i]).strip().lower().startswith(INSTRUCTOR_NICKNAME):
-                instructors.append(str(roster["netid"].iloc[i]).strip().lower())
     chart_svg, chart_legend = skill_chart(by_lead, board, names, instructors)
     live_card = ""
     future_note = ""
@@ -885,17 +908,22 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     lab6_card = ""
     if lab6 is not None and len(lab6) > 0:
         lab6_rows = []
+        student_rank = 0
         for i in range(len(lab6)):
             row = lab6.iloc[i]
-            css = ' class="top"' if i == 0 else ""
-            lab6_rows.append("<tr" + css + "><td>" + str(i + 1) + '</td><td class="name">' +
-                             html.escape(names.get(row["netid"], "Forecaster")) + '</td><td class="skill">' +
+            label, rank_cell, css = row_identity(row["netid"], names, instructors)
+            if css == "":
+                student_rank += 1
+                rank_cell = str(student_rank)
+                css = ' class="top"' if student_rank == 1 else ""
+            lab6_rows.append("<tr" + css + "><td>" + rank_cell + '</td><td class="name">' +
+                             html.escape(label) + '</td><td class="skill">' +
                              number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
                              number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
                              "</td><td>" + number(row["mae_mw"]) + "</td><td>" + number(row["hours_scored"]) +
                              '</td><td class="model">' + model_words(models.get(row["netid"]), short=True) + "</td></tr>")
         lab6_card = """<div class="card scroll"><h2>""" + html.escape(RANGE_TABLE_LABEL) + """ &middot; Ranges, ranked by CRPS</h2>
-<p class="note" style="margin-top:0">Only forecasts with a low and a high, made since """ + html.escape(RANGE_TABLE_LABEL) + """ opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside.</p>
+<p class="note" style="margin-top:0">Only forecasts with a low and a high, made since """ + html.escape(RANGE_TABLE_LABEL) + """ opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside. Grey rows aren't ranked: the simple forecasts to beat (no range, so their CRPS is their average miss), the class median range, and Dr. Dave's models.</p>
 <table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Avg miss (MW)</th><th>Hours scored</th><th title="The model making your forecasts right now, from your newest forecast and your model card">Live model</th></tr></thead>
 <tbody>""" + "".join(lab6_rows) + """</tbody></table></div>
 """
@@ -909,11 +937,16 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     final_card = ""
     if final is not None and len(final) > 0:
         final_rows = []
+        student_rank = 0
         for i in range(len(final)):
             row = final.iloc[i]
-            css = ' class="top"' if i == 0 else ""
-            final_rows.append("<tr" + css + "><td>" + str(i + 1) + '</td><td class="name">' +
-                              html.escape(names.get(row["netid"], "Forecaster")) + '</td><td class="skill">' +
+            label, rank_cell, css = row_identity(row["netid"], names, instructors)
+            if css == "":
+                student_rank += 1
+                rank_cell = str(student_rank)
+                css = ' class="top"' if student_rank == 1 else ""
+            final_rows.append("<tr" + css + "><td>" + rank_cell + '</td><td class="name">' +
+                              html.escape(label) + '</td><td class="skill">' +
                               number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
                               number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
                               "</td><td>" + number(row["live_pct"], 0, "%") + "</td><td>" + number(row["forecasts_missed"]) +
@@ -936,7 +969,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                    "<b>Show</b> to see just yours, switch between the forecast made 1 hour before each hour and the one "
                    "made 24 hours before (far-ahead ranges should be wider), and hover any hour for its numbers. "
                    "Only hours that are over are shown, so nobody can copy a range.")
-    range_section = range_card(ranges, names, "Your ranges, hour by hour", range_intro)
+    range_section = range_card(ranges, names, "Your ranges, hour by hour", range_intro, instructors)
     final_started = final is not None and len(final) > 0
     default_tab = "final" if final_started else ("range" if lab6 is not None and len(lab6) > 0 else "point")
     point_note = ""
@@ -990,6 +1023,7 @@ td.skill { font-weight:700; color:var(--navy); }
 tr.top td { background:var(--top); }
 tr.baseline td { background:var(--baseline); color:var(--muted); font-style:italic; }
 tr.baseline td.skill { color:var(--muted); }
+tr.instructor td { font-style:normal; }
 h2 { font-size:17px; margin:0 0 6px; color:var(--navy); }
 .note { color:var(--muted); font-size:13px; margin:10px 0 0; }
 svg { width:100%; height:auto; }

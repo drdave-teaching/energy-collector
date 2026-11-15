@@ -398,7 +398,7 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
         same_hour_yesterday_mae_mw=("baseline_abs_error_mw", "mean"), isone_mae_mw=("isone_abs_error_mw", "mean")).round(1)
     write_csv(mine, "class/leaderboard_by_lead.csv", by_lead.reset_index())
     write_csv(mine, "class/scored_forecasts.csv", pairs.drop(columns=["issued", "target"]))
-    lab6 = build_lab6_board(mine, pairs)
+    lab6 = build_lab6_board(mine, pairs, roster)
     ranges = None
     try:                                      # a range chart problem never stops the leaderboard
         ranges = build_range_chart(pairs, lab6)
@@ -418,7 +418,49 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
     return board, by_lead.reset_index(), lab6, final, point, ranges
 
 
-def build_lab6_board(mine, pairs):
+def range_baseline_rows(ranged, roster=None):
+    """Baselines for the Lab 6 table, scored on every hour any range forecast covered (one copy per issue hour and
+    target hour). The simple baselines give no range, so their CRPS is their average miss. The class median range is the
+    median of every student's low, expected and high made that hour (Dr. Dave's models left out), scored as a range."""
+    rows = []
+    common = ranged.assign(issue_hour=ranged["issued"].dt.floor("h")).drop_duplicates(["issue_hour", "target"])
+    common = common.assign(inside_range=np.nan, range_width_mw=np.nan)
+    rows.append(leaderboard_row("BASELINE: same hour yesterday", common.assign(b=common["baseline_abs_error_mw"]), "b",
+                                "same_hour_yesterday_mw"))
+    for label, score_column, prediction_column in [("same hour last week", "last_week_abs_error_mw", "same_hour_last_week_mw"),
+                                                   ("average of the last 6 hours", "six_hour_avg_abs_error_mw", "six_hour_avg_mw"),
+                                                   ("ISO New England's forecast", "isone_abs_error_mw", "isone_forecast_mw")]:
+        some = common[common[prediction_column].notna()]
+        if len(some) > 0:
+            rows.append(leaderboard_row("BASELINE: " + label, some, score_column, prediction_column))
+
+    students = ranged
+    if roster is not None:
+        students = ranged[~ranged["netid"].isin(instructor_netids(roster))]
+    students = students.assign(issue_hour=students["issued"].dt.floor("h"))
+    students = students.sort_values("issued").drop_duplicates(["netid", "issue_hour", "target"], keep="last")
+    low = np.minimum(students["predicted_low_mw"], students["predicted_high_mw"])
+    high = np.maximum(students["predicted_low_mw"], students["predicted_high_mw"])
+    students = students.assign(low_mw=low, high_mw=high)
+    median = students.groupby(["issue_hour", "target"]).agg(
+        median_low=("low_mw", "median"), median_mid=("predicted_load_mw", "median"), median_high=("high_mw", "median"),
+        forecasters=("netid", "nunique")).reset_index()
+    median = median[median["forecasters"] >= CLASS_MEDIAN_MIN]
+    if len(median) > 0:
+        both = common.drop(columns=["inside_range", "range_width_mw"]).merge(median, on=["issue_hour", "target"], how="inner")
+        if len(both) > 0:
+            y = both["actual_mw"]
+            width = both["median_high"] - both["median_low"]
+            miss = (both["median_low"] - y).clip(lower=0) + (y - both["median_high"]).clip(lower=0)
+            abs_error = (both["median_mid"] - y).abs()
+            both = both.assign(median_crps=(0.5 * abs_error + (INTERVAL_ALPHA / 2) * (width + (2 / INTERVAL_ALPHA) * miss)) / 1.5,
+                               inside_range=((y >= both["median_low"]) & (y <= both["median_high"])).astype(float),
+                               range_width_mw=width)
+            rows.append(leaderboard_row("BASELINE: class median range (all students)", both, "median_crps", "median_mid"))
+    return rows
+
+
+def build_lab6_board(mine, pairs, roster=None):
     """Lab 6: only forecasts WITH a range, issued since LAB6_START_UTC. CRPS per hour = the leaderboard score
     (3-quantile CRPS = weighted interval score); rank = CRPS skill vs same hour yesterday, so joining late is no penalty."""
     ranged = pairs[pairs["inside_range"].notna() & (pairs["issued"] >= pd.Timestamp(LAB6_START_UTC))]
@@ -429,6 +471,7 @@ def build_lab6_board(mine, pairs):
         row = leaderboard_row(netid, group, "score", "predicted_load_mw")
         row["range_method"] = str(group["range_method"].iloc[-1]) if "range_method" in group.columns else ""
         rows.append(row)
+    rows.extend(range_baseline_rows(ranged, roster))
     lab6 = pd.DataFrame(rows).rename(columns={"score": "crps_mw", "skill_pct": "crps_skill_pct"})
     lab6 = lab6.sort_values("crps_skill_pct", ascending=False, na_position="last")
     lab6.insert(0, "rank", range(1, len(lab6) + 1))
@@ -458,6 +501,8 @@ def build_range_chart(pairs, lab6):
         at_lead = recent[recent["lead_hours"] == lead]
         forecasters = []
         for netid in lab6["netid"]:
+            if str(netid).startswith("BASELINE"):
+                continue
             rows = at_lead[at_lead["netid"] == netid].drop_duplicates("target", keep="last").set_index("target").sort_index()
             low = np.minimum(rows["predicted_low_mw"], rows["predicted_high_mw"])
             high = np.maximum(rows["predicted_low_mw"], rows["predicted_high_mw"])
