@@ -749,6 +749,8 @@ def model_label(card, range_method):
     """Which lab a model came from, in words a student recognizes. card = their model_card.json (or None)."""
     card = card or {}
     method = str(range_method)
+    if REQUIRE_KERAS:                          # OPIM 5509: Final Project Part 1 (FP1) and Part 2 (FP2) range methods
+        return deep_learning_model_label(card, method)
     if method == "two_stage_quantile":
         return "Dr. Dave's two-stage model"
     if "starter" in str(card.get("champion", "")):
@@ -762,6 +764,25 @@ def model_label(card, range_method):
     if method in ["quantile_models", "offsets_by_hour"]:
         return "Range model"
     return "Lab 5: expected value, no range"
+
+
+def deep_learning_model_label(card, method):
+    """OPIM 5509 labels. forecast-24h-dl adds _nws to the method when it fell back to the NWS forecast."""
+    fallback = ""
+    if method.endswith("_nws"):
+        method = method[:-len("_nws")]
+        fallback = " (NWS weather fallback)"
+    if card.get("model_name"):
+        return str(card["model_name"]) + fallback
+    if method == "lstm_hrrr_runs":
+        return "FP2 range A: spread across weather runs" + fallback
+    if method == "lstm_quantiles":
+        return "FP2 range B: probabilistic LSTM" + fallback
+    if method == "lstm_quantiles_pooled":
+        return "FP2 range C: percentiles pooled over weather runs" + fallback
+    if method in ["none", "", "nan"]:
+        return "FP1: one forecast per hour, no range" + fallback
+    return "LSTM with a range (" + method + ")" + fallback
 
 
 def live_models(master, card_by_netid):
