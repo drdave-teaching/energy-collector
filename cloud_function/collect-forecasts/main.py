@@ -418,12 +418,13 @@ def build_leaderboard(client, mine, master, cards=None, roster=None):
     return board, by_lead.reset_index(), lab6, final, point, ranges
 
 
-def range_baseline_rows(ranged, roster=None):
+def range_baseline_rows(ranged, roster=None, hours_from=None):
     """Baselines for the Lab 6 table, scored on every hour any range forecast covered (one copy per issue hour and
     target hour). The simple baselines give no range, so their CRPS is their average miss. The class median range is the
     median of every student's low, expected and high made that hour (Dr. Dave's models left out), scored as a range."""
     rows = []
-    common = ranged.assign(issue_hour=ranged["issued"].dt.floor("h")).drop_duplicates(["issue_hour", "target"])
+    source = ranged if hours_from is None else hours_from         # which forecast hours the baselines are scored on
+    common = source.assign(issue_hour=source["issued"].dt.floor("h")).drop_duplicates(["issue_hour", "target"])
     common = common.assign(inside_range=np.nan, range_width_mw=np.nan)
     rows.append(leaderboard_row("BASELINE: same hour yesterday", common.assign(b=common["baseline_abs_error_mw"]), "b",
                                 "same_hour_yesterday_mw"))
@@ -586,14 +587,26 @@ def build_final_board(mine, master, actual, isone, roster):
         row["live_pct"] = round(100 * len(made) / len(group), 1)
         row["has_range"] = bool(made["inside_range"].notna().any())
         row["instructor"] = netid in instructors
+        row["baseline"] = False
         rows.append(row)
+    # Baselines on the same window hours (never graded): the simple forecasts and the class median range, built only
+    # from forecasts students actually made in time
+    made_ranges = pairs[~pairs["filled"].astype(bool) & pairs["inside_range"].notna()]
+    try:
+        for row in range_baseline_rows(made_ranges, roster, hours_from=pairs):
+            row["instructor"] = False
+            row["baseline"] = True
+            row["has_range"] = False
+            rows.append(row)
+    except Exception as err:
+        logging.error("Final baselines: %s %s", err, traceback.format_exc())
     final = pd.DataFrame(rows).rename(columns={"score": "crps_mw", "skill_pct": "crps_skill_pct"})
     final["window_first_hour_utc"] = hours[0].strftime("%Y-%m-%dT%H:%MZ")
     final["window_last_hour_utc"] = hours[-1].strftime("%Y-%m-%dT%H:%MZ")
 
     # Rubric row 1: 20 x (skill - lowest) / (highest - lowest) among students with a range; no range = 0 points.
     # Second anchor (Dr. Dave's call): the lowest student who was live 90%+ of the window gets 0 (anyone below, 0).
-    graded = final[~final["instructor"] & final["has_range"] & final["crps_skill_pct"].notna()]
+    graded = final[~final["instructor"] & ~final["baseline"] & final["has_range"] & final["crps_skill_pct"].notna()]
     final["score_points"] = 0.0
     final["score_points_live90_anchor"] = 0.0
     if len(graded) > 0:
@@ -606,9 +619,9 @@ def build_final_board(mine, master, actual, isone, roster):
                 points = FINAL_SCORE_POINTS * (final["crps_skill_pct"] - low) / (best - low)
             else:
                 points = FINAL_SCORE_POINTS * (final["crps_skill_pct"] >= best).astype(float)
-            eligible = ~final["instructor"] & final["has_range"]
+            eligible = ~final["instructor"] & ~final["baseline"] & final["has_range"]
             final.loc[eligible, anchor_column] = points[eligible].clip(0, FINAL_SCORE_POINTS).round(1)
-    final.loc[final["instructor"], ["score_points", "score_points_live90_anchor"]] = np.nan
+    final.loc[final["instructor"] | final["baseline"], ["score_points", "score_points_live90_anchor"]] = np.nan
     final = final.sort_values("crps_skill_pct", ascending=False, na_position="last")
     final.insert(0, "rank", range(1, len(final) + 1))
     final["updated_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
