@@ -775,11 +775,11 @@ def deep_learning_model_label(card, method):
     if card.get("model_name"):
         return str(card["model_name"]) + fallback
     if method == "lstm_hrrr_runs":
-        return "FP2 range A: spread across weather runs" + fallback
+        return "HRRR runs: spread across weather runs" + fallback
     if method == "lstm_quantiles":
-        return "FP2 range B: probabilistic LSTM" + fallback
+        return "FP2: percentile LSTM with a range" + fallback
     if method == "lstm_quantiles_pooled":
-        return "FP2 range C: percentiles pooled over weather runs" + fallback
+        return "HRRR runs: percentiles pooled over weather runs" + fallback
     if method in ["none", "", "nan"]:
         return "FP1: one forecast per hour, no range" + fallback
     return "LSTM with a range (" + method + ")" + fallback
