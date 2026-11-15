@@ -19,8 +19,16 @@ POINT_LABEL = os.getenv("POINT_LABEL", "Lab 5")     # the no-range assignment's 
 SHIP_STEP = os.getenv("SHIP_STEP", "Lab 5 Part 7d")     # where a student ships a model
 SHARE_STEP = os.getenv("SHARE_STEP", "Lab 5 Part 7e")     # where a student shares the bucket
 FORECAST_FUNCTION = os.getenv("FORECAST_FUNCTION", "forecast-24h")     # the hourly function students run
-FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-29")
+FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-30")
 FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-04")
+
+
+def start_words(day_text):
+    """When the final window opens, in words: a Monday start is 'Sunday night at midnight (12:00 AM Mon Nov 30)'."""
+    day = pd.Timestamp(day_text)
+    if day.dayofweek == 0:
+        return "Sunday night at midnight (12:00 AM " + day_words(day_text) + ")"
+    return day_words(day_text)
 
 
 def day_words(day_text):
@@ -960,7 +968,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 
     if final_card == "":
         final_card = """<div class="card"><h2>Final project &middot; the grading window</h2>
-<p class="note" style="margin-top:0">Scoring starts """ + day_words(FINAL_START_LOCAL) + """ and runs to """ + day_words(FINAL_END_LOCAL) + """. Every forecaster is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead, ranked by CRPS skill. A forecast you don't make in time counts as same hour yesterday with no range, so keep your energy project running. Until then, the charts below show your ranges so far; watch your Inside range on the """ + html.escape(RANGE_TABLE_LABEL) + """ tab.</p></div>
+<p class="note" style="margin-top:0">Scoring starts """ + start_words(FINAL_START_LOCAL) + """ and runs to """ + day_words(FINAL_END_LOCAL) + """. Every forecaster is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead, ranked by CRPS skill. A forecast you don't make in time counts as same hour yesterday with no range, so keep your energy project running. Until then, the charts below show your ranges so far; watch your Inside range on the """ + html.escape(RANGE_TABLE_LABEL) + """ tab.</p></div>
 """
     # Range charts: everyone's low-to-high band against the actual load, past hours only
     range_intro = ("One chart per forecaster, in " + html.escape(RANGE_TABLE_LABEL) + " table order, all on the same scale: "
