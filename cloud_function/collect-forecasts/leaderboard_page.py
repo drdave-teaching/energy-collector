@@ -764,8 +764,22 @@ TAB_SCRIPT = """<script>
 """
 
 
+def model_words(entry, short=False):
+    """The live model in words: 'Lab 6D: tuned range, shipped Sat Nov 14, 7:44 PM'. A model card that doesn't match the
+    newest forecasts gets a warning, so nobody wonders which model is being scored."""
+    if not entry:
+        return "&ndash;"
+    text = html.escape(entry.get("label", ""))
+    if entry.get("shipped_utc"):
+        text = text + ('<br><span class="when">' if short else ", ") + "shipped " + eastern(entry["shipped_utc"]) +             ("</span>" if short else "")
+    if not entry.get("card_matches", True):
+        text = text + ('<br>' if short else " ") + '<span class="warn">model card is newer than your forecasts: run ' +             html.escape(FORECAST_FUNCTION) + " again</span>"
+    return text
+
+
 def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, lab6=None, final=None, point=None,
-           ranges=None):
+           ranges=None, models=None):
+    models = models or {}
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     # The point tab (Lab 5) shows only forecasts without a range when the collector sends them; otherwise everything
@@ -858,6 +872,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                 live_count += 1
                 if status.get("netid") not in scored:
                     word = word + ", first score after its first full hour"
+                if status.get("netid") in models:
+                    word = word + ' <span class="when">&middot; ' + model_words(models[status.get("netid")]) + "</span>"
             items.append('<li><b>' + name + '</b>: ' + word + "</li>")
         live_now = ('<div class="card"><h2>Forecasting now: ' + str(live_count) + " of " + str(len(statuses)) + "</h2>"
                     '<p class="note" style="margin-top:0">Every forecaster the collector reads each hour. A new forecast '
@@ -876,10 +892,11 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                              html.escape(names.get(row["netid"], "Forecaster")) + '</td><td class="skill">' +
                              number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
                              number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
-                             "</td><td>" + number(row["mae_mw"]) + "</td><td>" + number(row["hours_scored"]) + "</td></tr>")
+                             "</td><td>" + number(row["mae_mw"]) + "</td><td>" + number(row["hours_scored"]) +
+                             '</td><td class="model">' + model_words(models.get(row["netid"]), short=True) + "</td></tr>")
         lab6_card = """<div class="card scroll"><h2>""" + html.escape(RANGE_TABLE_LABEL) + """ &middot; Ranges, ranked by CRPS</h2>
 <p class="note" style="margin-top:0">Only forecasts with a low and a high, made since """ + html.escape(RANGE_TABLE_LABEL) + """ opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside.</p>
-<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Avg miss (MW)</th><th>Hours scored</th></tr></thead>
+<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Avg miss (MW)</th><th>Hours scored</th><th title="The model making your forecasts right now, from your newest forecast and your model card">Live model</th></tr></thead>
 <tbody>""" + "".join(lab6_rows) + """</tbody></table></div>
 """
 
@@ -900,11 +917,11 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                               number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
                               number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
                               "</td><td>" + number(row["live_pct"], 0, "%") + "</td><td>" + number(row["forecasts_missed"]) +
-                              "</td></tr>")
+                              '</td><td class="model">' + model_words(models.get(row["netid"]), short=True) + "</td></tr>")
         window = eastern(final["window_first_hour_utc"].iloc[0]) + " to " + eastern(final["window_last_hour_utc"].iloc[0])
         final_card = """<div class="card scroll"><h2>Final project &middot; the grading window</h2>
 <p class="note" style="margin-top:0">""" + day_words(FINAL_START_LOCAL) + " to " + day_words(FINAL_END_LOCAL) + """, so far """ + window + """. Everyone is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your CRPS skill toward 0%. <b>Live</b> is the share of those forecasts you made. Scores use the live load; the final grade uses the official metered load.</p>
-<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th></tr></thead>
+<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th><th title="The model making your forecasts right now">Live model</th></tr></thead>
 <tbody>""" + "".join(final_rows) + """</tbody></table></div>
 """
 
@@ -1007,6 +1024,8 @@ svg .hit { fill:transparent; } svg .hit:hover { fill:var(--ink); fill-opacity:.0
 .rangepanel figcaption span { display:block; color:var(--muted); }
 svg .band { fill:var(--fc); fill-opacity:.22; stroke:none; } svg .bandline { stroke:var(--fc); stroke-opacity:.4; stroke-width:4; }
 svg .outside { fill:#d62828; }
+td.model { text-align:left; white-space:normal; min-width:170px; font-size:13px; line-height:1.3; }
+.when { color:var(--muted); font-size:12px; } .warn { color:#b42318; font-size:12px; }
 .picker { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; margin:10px 0 8px; font-size:13px; }
 .pick { cursor:pointer; display:inline-flex; align-items:center; min-height:24px; }
 .pick input { margin:0 6px 0 0; }

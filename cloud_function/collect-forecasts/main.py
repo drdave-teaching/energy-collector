@@ -687,6 +687,46 @@ def build_live_chart(client, master, board, roster, now):
     return live
 
 
+def model_label(card, range_method):
+    """Which lab a model came from, in words a student recognizes. card = their model_card.json (or None)."""
+    card = card or {}
+    method = str(range_method)
+    if method == "two_stage_quantile":
+        return "Dr. Dave's two-stage model"
+    if "starter" in str(card.get("champion", "")):
+        return "Lab 5 starter" + (" + simple range" if method == "offsets_by_hour" else "")
+    if method.startswith("hrrr_qrf_pooled"):
+        if "RandomForestQuantileRegressor" not in str(card.get("model_type", "RandomForestQuantileRegressor")):
+            return "Lab 6: custom range model"
+        if card.get("tuning") not in [None, ""] and not (isinstance(card.get("tuning"), float) and np.isnan(card.get("tuning"))):
+            return "Lab 6D: tuned range"
+        return "Lab 6C: range"
+    if method in ["quantile_models", "offsets_by_hour"]:
+        return "Range model"
+    return "Lab 5: expected value, no range"
+
+
+def live_models(master, card_by_netid):
+    """netid -> what is live right now, from the newest forecast each student sent (the truth) and their model card.
+    model_version on a forecast row = trained_at of the model that made it, so the two must match."""
+    found = {}
+    if master is None or len(master) == 0:
+        return found
+    newest = master[master["issued_at_utc"] == master.groupby("netid")["issued_at_utc"].transform("max")]
+    for netid, rows in newest.groupby("netid"):
+        version = str(rows["model_version"].iloc[-1]) if "model_version" in rows.columns else ""
+        method = str(rows["range_method"].iloc[-1]) if "range_method" in rows.columns else "none"
+        card = card_by_netid.get(netid)
+        entry = {"label": model_label(card, method), "version": version, "shipped_utc": "", "card_matches": True}
+        stamp = pd.to_datetime(version, utc=True, errors="coerce")
+        if not pd.isna(stamp):
+            entry["shipped_utc"] = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if card is not None and card.get("trained_at") and str(card.get("trained_at")) != version and method != "two_stage_quantile":
+            entry["card_matches"] = False
+        found[netid] = entry
+    return found
+
+
 def run_once():
     now = datetime.now(timezone.utc)
     client = storage.Client()
@@ -765,8 +805,13 @@ def run_once():
                         live = build_live_chart(client, master, board, roster, now)
                     except Exception as err:
                         logging.error("Live chart: %s\n%s", err, traceback.format_exc())
+                    models_now = {}
+                    try:                      # a label problem never stops the page
+                        models_now = live_models(master, card_by_netid)
+                    except Exception as err:
+                        logging.error("Live models: %s %s", err, traceback.format_exc())
                     page = leaderboard_page.render(board, by_lead, roster, waiting, live=live, statuses=statuses, lab6=lab6,
-                                                  final=final, point=point, ranges=ranges)
+                                                  final=final, point=point, ranges=ranges, models=models_now)
                     blob = client.bucket(PUBLIC_BUCKET).blob("index.html")
                     blob.cache_control = "public, max-age=60"
                     blob.upload_from_string(page, content_type="text/html; charset=utf-8")
