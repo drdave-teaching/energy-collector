@@ -23,6 +23,8 @@ FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-30")
 # OPIM 5512: the final project tab shows only models shipped from the final project notebook (Lab 6 models stay on the
 # Lab 6 tab). OPIM 5509 (REQUIRE_KERAS) has no such split.
 FINAL_MODELS_ONLY = os.getenv("REQUIRE_KERAS", "false").strip().lower() not in ["1", "true", "yes"]
+# Dr. Dave's models on the Lab 5 and Lab 6 tabs: off in 5512 (they show on the final project tab only), on in 5509.
+INSTRUCTOR_ON_LAB_TABS = os.getenv("INSTRUCTOR_ON_LAB_TABS", "false" if FINAL_MODELS_ONLY else "true").strip().lower() in ["1", "true", "yes"]
 FINAL_NOTEBOOK_WORDS = os.getenv("FINAL_NOTEBOOK_WORDS", "the final project notebook (Part 7)")
 FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-04")
 
@@ -694,6 +696,20 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
             "</span></figcaption>" + "".join(parts) + "</figure>")
 
 
+def without_forecasters(chart, netids):
+    """The range chart without some forecasters (Dr. Dave's models on the lab tabs)."""
+    if chart is None or len(netids) == 0:
+        return chart
+    by_lead = {}
+    for lead in chart["by_lead"]:
+        items = []
+        for item in chart["by_lead"][lead]:
+            if item["netid"] not in netids:
+                items.append(dict(item))
+        by_lead[lead] = items
+    return {"first": chart["first"], "last": chart["last"], "actual": chart["actual"], "by_lead": by_lead}
+
+
 def final_models_chart(chart, models):
     """The range chart cut down for the final project tab: only forecasters whose live model is a final project model,
     and only the hours that model made (so a band never mixes in an earlier lab's model)."""
@@ -853,6 +869,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
         for i in range(len(roster)):
             if str(roster["nickname"].iloc[i]).strip().lower().startswith(INSTRUCTOR_NICKNAME):
                 instructors.append(str(roster["netid"].iloc[i]).strip().lower())
+    off_lab_tabs = [] if INSTRUCTOR_ON_LAB_TABS else list(instructors)
     now = now or datetime.now(timezone.utc)
     names = display_names(roster)
     # The point tab (Lab 5) shows only forecasts without a range when the collector sends them; otherwise everything
@@ -865,6 +882,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     rows = []
     rank = 0
     for _, row in point_table.iterrows():
+        if row["netid"] in off_lab_tabs:
+            continue
         baseline = row["netid"].startswith("BASELINE")
         if baseline:
             label = row["netid"].replace("BASELINE: ", "")
@@ -960,6 +979,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
         student_rank = 0
         for i in range(len(lab6)):
             row = lab6.iloc[i]
+            if row["netid"] in off_lab_tabs:
+                continue
             label, rank_cell, css = row_identity(row["netid"], names, instructors)
             if css == "":
                 student_rank += 1
@@ -972,7 +993,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                              "</td><td>" + number(row["mae_mw"]) + "</td><td>" + number(row["hours_scored"]) +
                              '</td><td class="model">' + model_words(models.get(row["netid"]), short=True) + "</td></tr>")
         lab6_card = """<div class="card scroll"><h2>""" + html.escape(RANGE_TABLE_LABEL) + """ &middot; Ranges, ranked by CRPS</h2>
-<p class="note" style="margin-top:0">Only forecasts with a low and a high, made since """ + html.escape(RANGE_TABLE_LABEL) + """ opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside. Grey rows aren't ranked: the simple forecasts to beat (no range, so their CRPS is their average miss), the class median range, and Dr. Dave's models.</p>
+<p class="note" style="margin-top:0">Only forecasts with a low and a high, made since """ + html.escape(RANGE_TABLE_LABEL) + """ opened. <b>CRPS</b> is the score per forecast hour in MW (lower is better; see "Scoring a range" below). <b>CRPS skill</b> compares it with same hour yesterday on the exact hours you forecast, so joining late is no penalty. Aim for about 80% inside. Grey rows aren't ranked: the simple forecasts to beat (no range, so their CRPS is their average miss), the class median range""" + (", and Dr. Dave's models" if INSTRUCTOR_ON_LAB_TABS else "") + """.</p>
 <table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Avg miss (MW)</th><th>Hours scored</th><th title="The model making your forecasts right now, from your newest forecast and your model card">Live model</th></tr></thead>
 <tbody>""" + "".join(lab6_rows) + """</tbody></table></div>
 """
@@ -1057,7 +1078,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                    "made 24 hours before (far-ahead ranges should be wider), and hover any hour for its numbers. "
                    "A dotted line marks an hour where a new model took over, so the band can change shape there. "
                    "Only hours that are over are shown, so nobody can copy a range.")
-    range_section = range_card(ranges, names, "Your ranges, hour by hour", range_intro, instructors)
+    range_section = range_card(without_forecasters(ranges, off_lab_tabs), names, "Your ranges, hour by hour", range_intro,
+                               instructors)
     final_range_section = range_section
     if FINAL_MODELS_ONLY:
         final_intro = ("One chart per final project model, all on the same scale: the last 48 hours that are over, and only the "
