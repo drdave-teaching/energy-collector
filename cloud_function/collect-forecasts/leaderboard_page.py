@@ -644,6 +644,11 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
             parts.append('<polygon class="band" points="' + " ".join(upper + lower) + '"/>')
     parts.append(draw(item["expected"].dropna(), x, y, "var(--fc)", 1.5))
     parts.append(draw(chart["actual"], x, y, "var(--ink)", 2.5))
+    # A dotted line where a new model took over, so a band that changes shape is explained
+    switches = item.get("switches", [])
+    for t in switches:
+        parts.append('<line x1="' + format(x(t), ".1f") + '" x2="' + format(x(t), ".1f") + '" y1="' + str(top) +
+                     '" y2="' + str(height - bottom) + '" class="switch"/>')
     outside = item["inside"][item["inside"] == 0]
     for t in outside.index:
         if t in chart["actual"].index:
@@ -662,6 +667,8 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
             words = words + ", low " + format(float(low[t]), ",.0f") + ", expected " + \
                 format(float(item["expected"].get(t, np.nan)), ",.0f") + ", high " + format(float(high[t]), ",.0f") + \
                 (", inside" if item["inside"].get(t, 0) == 1 else ", OUTSIDE")
+            if t in switches:
+                words = words + " (a new model starts here)"
         else:
             words = words + ", no range forecast at this lead"
         parts.append('<rect class="hit" x="' + format(x(t) - half, ".0f") + '" y="' + str(top) + '" width="' +
@@ -673,6 +680,10 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
         summary = str(int(inside.sum())) + " of " + str(len(inside)) + " inside (" + format(100 * inside.mean(), ".0f") + "%)"
         width_mw = (item["high"] - item["low"]).dropna()
         summary = summary + " &middot; avg width " + format(width_mw.mean(), ",.0f") + " MW"
+        if len(switches) == 1:
+            summary = summary + " &middot; 1 model switch"
+        if len(switches) > 1:
+            summary = summary + " &middot; " + str(len(switches)) + " model switches"
     else:
         summary = "no forecasts at this lead in the last " + str(len(chart["actual"])) + " hours"
     return ('<figure class="rangepanel" data-name="' + html.escape(item["netid_key"]) + '"><figcaption><b>' + rank + html.escape(name) + "</b><span>" + summary +
@@ -744,7 +755,8 @@ def range_card(chart, names, title, intro, instructors=()):
             '<div class="legend" style="margin:0 0 8px"><span class="key"><i style="background:var(--fc);opacity:.3;height:10px"></i>forecast range (low to high)</span>'
             '<span class="key"><i style="background:var(--fc)"></i>forecast (expected value)</span>'
             '<span class="key"><i style="background:var(--ink);height:5px"></i>actual load</span>'
-            '<span class="key"><i style="background:#d62828;width:8px;height:8px;border-radius:50%"></i>actual outside your range</span></div>'
+            '<span class="key"><i style="background:#d62828;width:8px;height:8px;border-radius:50%"></i>actual outside your range</span>'
+            '<span class="key"><i style="background:none;border-left:2px dotted var(--muted);width:0;height:14px"></i>new model shipped</span></div>'
             + "".join(sets) + "</div>\n")
 
 
@@ -999,6 +1011,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                    "from the low to the high, and about 8 hours in 10 should land inside it; a red dot is an hour the actual load got out. Pick your nickname under "
                    "<b>Show</b> to see just yours, switch between the forecast made 1 hour before each hour and the one "
                    "made 24 hours before (far-ahead ranges should be wider), and hover any hour for its numbers. "
+                   "A dotted line marks an hour where a new model took over, so the band can change shape there. "
                    "Only hours that are over are shown, so nobody can copy a range.")
     range_section = range_card(ranges, names, "Your ranges, hour by hour", range_intro, instructors)
     final_started = final is not None and len(final) > 0 and not ("preview" in final.columns and bool(final["preview"].iloc[0]))
@@ -1089,6 +1102,7 @@ svg .hit { fill:transparent; } svg .hit:hover { fill:var(--ink); fill-opacity:.0
 .rangepanel figcaption span { display:block; color:var(--muted); }
 svg .band { fill:var(--fc); fill-opacity:.22; stroke:none; } svg .bandline { stroke:var(--fc); stroke-opacity:.4; stroke-width:4; }
 svg .outside { fill:#d62828; }
+svg .switch { stroke:var(--muted); stroke-width:1.5; stroke-dasharray:2 3; }
 td.model { text-align:left; white-space:normal; min-width:170px; font-size:13px; line-height:1.3; }
 .when { color:var(--muted); font-size:12px; } .warn { color:#b42318; font-size:12px; }
 .picker { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; margin:10px 0 8px; font-size:13px; }

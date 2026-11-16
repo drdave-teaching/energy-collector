@@ -485,6 +485,19 @@ RANGE_CHART_HOURS = 48          # the range charts show the last 48 hours that a
 RANGE_CHART_LEADS = [1, 24]     # one view per lead: the forecast made 1 hour before, and the one made 24 hours before
 
 
+def model_switches(rows):
+    """The target hours where a forecaster's range starts coming from a different model than the hour before (a new
+    model was shipped, or the range method changed). The chart marks them, so a band that changes shape is explained."""
+    if len(rows) == 0:
+        return []
+    made_by = rows["model_version"].astype(str) if "model_version" in rows.columns else pd.Series("", index=rows.index)
+    if "range_method" in rows.columns:
+        made_by = made_by + " | " + rows["range_method"].astype(str)
+    changed = made_by != made_by.shift(1)
+    changed.iloc[0] = False
+    return list(rows.index[changed.values])
+
+
 def build_range_chart(pairs, lab6):
     """Range charts for the Lab 6 and final project tabs: for every forecaster on the Lab 6 board, their low, expected
     and high for each of the last 48 hours that are over, at 1 hour ahead and at 24 hours ahead, with the actual load.
@@ -509,7 +522,7 @@ def build_range_chart(pairs, lab6):
             low = np.minimum(rows["predicted_low_mw"], rows["predicted_high_mw"])
             high = np.maximum(rows["predicted_low_mw"], rows["predicted_high_mw"])
             forecasters.append({"netid": netid, "low": low, "high": high, "expected": rows["predicted_load_mw"],
-                                "inside": rows["inside_range"]})
+                                "inside": rows["inside_range"], "switches": model_switches(rows)})
         by_lead[lead] = forecasters
     return {"first": first_hour, "last": last_hour, "actual": actual, "by_lead": by_lead}
 
