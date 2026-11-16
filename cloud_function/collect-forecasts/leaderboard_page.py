@@ -960,7 +960,15 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                               "</td><td>" + number(row["live_pct"], 0, "%") + "</td><td>" + number(row["forecasts_missed"]) +
                               '</td><td class="model">' + model_words(models.get(row["netid"]), short=True) + "</td></tr>")
         window = eastern(final["window_first_hour_utc"].iloc[0]) + " to " + eastern(final["window_last_hour_utc"].iloc[0])
-        final_card = """<div class="card scroll"><h2>Final project &middot; the grading window</h2>
+        is_preview = "preview" in final.columns and bool(final["preview"].iloc[0])
+        if is_preview:
+            final_card = """<div class="card scroll"><h2>Final project &middot; PREVIEW (not graded)</h2>
+<p class="note" style="margin-top:0"><b>A practice run, not your grade.</b> Scoring for real starts """ + start_words(FINAL_START_LOCAL) + """ and runs to """ + day_words(FINAL_END_LOCAL) + """. Until then, this table scores the last few days (""" + window + """) exactly the way the final will: every hour, 1 to 24 hours ahead, ranked by <b>CRPS skill (higher is better)</b>; CRPS in MW is lower is better. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your skill toward 0%. <b>Live</b> is the share of those forecasts you made. This preview resets when the real window opens.</p>
+<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th><th title="The model making your forecasts right now">Live model</th></tr></thead>
+<tbody>""" + "".join(final_rows) + """</tbody></table></div>
+"""
+        else:
+            final_card = """<div class="card scroll"><h2>Final project &middot; the grading window</h2>
 <p class="note" style="margin-top:0">""" + day_words(FINAL_START_LOCAL) + " to " + day_words(FINAL_END_LOCAL) + """, so far """ + window + """. Everyone is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your CRPS skill toward 0%. <b>Live</b> is the share of those forecasts you made. Scores use the live load; the final grade uses the official metered load.</p>
 <table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th><th title="The model making your forecasts right now">Live model</th></tr></thead>
 <tbody>""" + "".join(final_rows) + """</tbody></table></div>
@@ -978,7 +986,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                    "made 24 hours before (far-ahead ranges should be wider), and hover any hour for its numbers. "
                    "Only hours that are over are shown, so nobody can copy a range.")
     range_section = range_card(ranges, names, "Your ranges, hour by hour", range_intro, instructors)
-    final_started = final is not None and len(final) > 0
+    final_started = final is not None and len(final) > 0 and not ("preview" in final.columns and bool(final["preview"].iloc[0]))
     default_tab = "final" if final_started else ("range" if lab6 is not None and len(lab6) > 0 else "point")
     point_note = ""
     if point is not None:

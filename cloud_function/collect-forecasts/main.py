@@ -65,6 +65,7 @@ LAB6_START_UTC = os.getenv("LAB6_START_UTC", "2026-11-02T00:00:00Z")
 # forecast they didn't make in time is filled with same hour yesterday (no range), so being down never helps.
 FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-30")
 FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-04")
+FINAL_PREVIEW_DAYS = int(os.getenv("FINAL_PREVIEW_DAYS", "3"))    # before the window opens: an ungraded preview of the last N days
 FINAL_SCORE_POINTS = 20       # rubric row 1: best CRPS skill in the class = 20 points, lowest = 0
 FILL_ISSUE_MINUTE = 20        # a filled forecast is treated as made at :20, when forecast-24h runs
 
@@ -521,6 +522,18 @@ def final_window_hours(actual):
     return known[(known >= first) & (known <= last)].sort_values()
 
 
+def final_preview_hours(actual):
+    """Before the window opens: the last FINAL_PREVIEW_DAYS days of target hours whose actual load is in. Scored exactly
+    like the final, but never graded (no points, its own file)."""
+    first = pd.Timestamp(FINAL_START_LOCAL).tz_localize("America/New_York").tz_convert("UTC")
+    known = actual.index[~actual.index.duplicated(keep="last")].sort_values()
+    known = known[known < first]
+    if len(known) == 0:
+        return known
+    newest = known[-1]
+    return known[known > newest - pd.Timedelta(days=FINAL_PREVIEW_DAYS)]
+
+
 def fill_missed(master, actual, netids, hours):
     """Every forecaster's forecasts for the window: each target hour, 1 to 24 hours ahead, made at issue hour
     target - lead. Their own forecast where it counted (seen in time, newest one that issue hour); same hour yesterday
@@ -571,6 +584,10 @@ def build_final_board(mine, master, actual, isone, roster):
     """Final project (A11): CRPS skill over the grading window, with missed forecasts filled with same hour yesterday.
     Writes class/final_project_scores.csv (private: NetIDs and rubric points). Returns the table without points."""
     hours = final_window_hours(actual)
+    preview = False
+    if len(hours) == 0:                      # window not open yet: an ungraded preview of the last few days
+        hours = final_preview_hours(actual)
+        preview = True
     if len(hours) == 0:
         return None
     instructors = instructor_netids(roster)
@@ -603,6 +620,13 @@ def build_final_board(mine, master, actual, isone, roster):
     final = pd.DataFrame(rows).rename(columns={"score": "crps_mw", "skill_pct": "crps_skill_pct"})
     final["window_first_hour_utc"] = hours[0].strftime("%Y-%m-%dT%H:%MZ")
     final["window_last_hour_utc"] = hours[-1].strftime("%Y-%m-%dT%H:%MZ")
+    final["preview"] = preview
+    if preview:                              # never graded: no points, and its own file (final_project_scores.csv untouched)
+        final = final.sort_values("crps_skill_pct", ascending=False, na_position="last")
+        final.insert(0, "rank", range(1, len(final) + 1))
+        final["updated_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+        write_csv(mine, "class/final_project_preview.csv", final)
+        return final
 
     # Rubric row 1: 20 x (skill - lowest) / (highest - lowest) among students with a range; no range = 0 points.
     # Second anchor (Dr. Dave's call): the lowest student who was live 90%+ of the window gets 0 (anyone below, 0).
