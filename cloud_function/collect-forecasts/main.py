@@ -522,7 +522,8 @@ def build_range_chart(pairs, lab6):
             low = np.minimum(rows["predicted_low_mw"], rows["predicted_high_mw"])
             high = np.maximum(rows["predicted_low_mw"], rows["predicted_high_mw"])
             forecasters.append({"netid": netid, "low": low, "high": high, "expected": rows["predicted_load_mw"],
-                                "inside": rows["inside_range"], "switches": model_switches(rows)})
+                                "inside": rows["inside_range"], "switches": model_switches(rows),
+                                "made_by": rows["model_version"].astype(str) if "model_version" in rows.columns else None})
         by_lead[lead] = forecasters
     return {"first": first_hour, "last": last_hour, "actual": actual, "by_lead": by_lead}
 
@@ -791,6 +792,8 @@ def model_label(card, range_method):
     if method == "two_stage_quantile":
         return "Dr. Dave's two-stage model"
     if method in ["range_model", "quantile_forest"]:
+        if str(card.get("notebook", "")).startswith("Lab 6"):
+            return "Lab 6B: quantile forest (NWS)"
         return "Final project (NWS)"
     if "starter" in str(card.get("champion", "")):
         return "Lab 5 starter" + (" + simple range" if method == "offsets_by_hour" else "")
@@ -824,6 +827,20 @@ def deep_learning_model_label(card, method):
     return "LSTM with a range (" + method + ")" + fallback
 
 
+FINAL_PROJECT_METHODS = ["range_model", "quantile_forest", "two_stage_quantile"]
+
+
+def is_final_project_model(card, range_method):
+    """True when the live model was shipped from the final project notebook (or is Dr. Dave's two-stage model). A range
+    shipped from a Lab 6 notebook is a Lab 6 model: it stays on the Lab 6 tab. OPIM 5509 has no such split."""
+    if REQUIRE_KERAS:
+        return True
+    method = str(range_method).replace("_nws", "")
+    if method not in FINAL_PROJECT_METHODS:
+        return False
+    return not str((card or {}).get("notebook", "")).startswith("Lab 6")
+
+
 def live_models(master, card_by_netid):
     """netid -> what is live right now, from the newest forecast each student sent (the truth) and their model card.
     model_version on a forecast row = trained_at of the model that made it, so the two must match."""
@@ -839,7 +856,8 @@ def live_models(master, card_by_netid):
         name = str((card or {}).get("model_name", "")).strip()[:40]
         if name and name.lower() != "nan":
             label = label + ": " + name                  # the name the student typed in their model card
-        entry = {"label": label, "version": version, "shipped_utc": "", "card_matches": True}
+        entry = {"label": label, "version": version, "shipped_utc": "", "card_matches": True,
+                 "final_project": is_final_project_model(card, method)}
         stamp = pd.to_datetime(version, utc=True, errors="coerce")
         if not pd.isna(stamp):
             entry["shipped_utc"] = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -20,6 +20,10 @@ SHIP_STEP = os.getenv("SHIP_STEP", "Lab 5 Part 7d")     # where a student ships 
 SHARE_STEP = os.getenv("SHARE_STEP", "Lab 5 Part 7e")     # where a student shares the bucket
 FORECAST_FUNCTION = os.getenv("FORECAST_FUNCTION", "forecast-24h")     # the hourly function students run
 FINAL_START_LOCAL = os.getenv("FINAL_START_LOCAL", "2026-11-30")
+# OPIM 5512: the final project tab shows only models shipped from the final project notebook (Lab 6 models stay on the
+# Lab 6 tab). OPIM 5509 (REQUIRE_KERAS) has no such split.
+FINAL_MODELS_ONLY = os.getenv("REQUIRE_KERAS", "false").strip().lower() not in ["1", "true", "yes"]
+FINAL_NOTEBOOK_WORDS = os.getenv("FINAL_NOTEBOOK_WORDS", "the final project notebook (Part 7)")
 FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-04")
 
 
@@ -690,6 +694,31 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
             "</span></figcaption>" + "".join(parts) + "</figure>")
 
 
+def final_models_chart(chart, models):
+    """The range chart cut down for the final project tab: only forecasters whose live model is a final project model,
+    and only the hours that model made (so a band never mixes in an earlier lab's model)."""
+    if chart is None:
+        return None
+    by_lead = {}
+    kept = 0
+    for lead in chart["by_lead"]:
+        items = []
+        for item in chart["by_lead"][lead]:
+            entry = models.get(item["netid"], {})
+            if not entry.get("final_project", False):
+                continue
+            mine = pd.Series(True, index=item["low"].index)
+            if item.get("made_by") is not None:
+                mine = item["made_by"] == str(entry.get("version", ""))
+            items.append({"netid": item["netid"], "low": item["low"][mine], "high": item["high"][mine],
+                          "expected": item["expected"][mine], "inside": item["inside"][mine], "switches": []})
+            kept += 1
+        by_lead[lead] = items
+    if kept == 0:
+        return None
+    return {"first": chart["first"], "last": chart["last"], "actual": chart["actual"], "by_lead": by_lead}
+
+
 def range_card(chart, names, title, intro, instructors=()):
     """A card of small range charts (one per Lab 6 forecaster), with a 1 hour / 24 hours ahead switch."""
     if chart is None:
@@ -962,7 +991,14 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                           "BASELINE: same hour yesterday"]
         has_range = final["has_range"].fillna(False).astype(bool) if "has_range" in final.columns else final["netid"].notna()
         is_baseline = final["baseline"].fillna(False).astype(bool) if "baseline" in final.columns else final["netid"].str.startswith("BASELINE")
-        shown = final[(has_range & ~is_baseline) | final["netid"].isin(keep_baselines)]
+        is_preview = "preview" in final.columns and bool(final["preview"].iloc[0])
+        is_final_model = pd.Series(True, index=final.index)
+        if FINAL_MODELS_ONLY:
+            flags = []
+            for netid in final["netid"]:
+                flags.append(bool(models.get(netid, {}).get("final_project", False)))
+            is_final_model = pd.Series(flags, index=final.index)
+        shown = final[(has_range & ~is_baseline & is_final_model) | final["netid"].isin(keep_baselines)]
         final_rows = []
         student_rank = 0
         for i in range(len(shown)):
@@ -978,7 +1014,6 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                               number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["live_pct"], 0, "%") +
                               '</td><td class="model">' + model_words(models.get(row["netid"]), short=True) + "</td></tr>")
         window = eastern(final["window_first_hour_utc"].iloc[0]) + " to " + eastern(final["window_last_hour_utc"].iloc[0])
-        is_preview = "preview" in final.columns and bool(final["preview"].iloc[0])
         header = ("<table><thead><tr><th>Rank</th><th>Forecaster</th>"
                   '<th title="How much better than same hour yesterday. Higher is better.">CRPS skill<br><span class="note">higher is better</span></th>'
                   '<th title="The leaderboard score for a range, in MW. Lower is better.">CRPS (MW)<br><span class="note">lower is better</span></th>'
@@ -987,6 +1022,15 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                   '<th title="The model making your forecasts right now">Live model</th></tr></thead>')
         who = (" Only forecasters with a range show here; grey rows are the yardsticks (ISO New England, the class median and "
                "same hour yesterday, which is 0% skill by definition). No range yet? Ship one and your row appears within about two hours.")
+        if FINAL_MODELS_ONLY:
+            who = (" <b>Only final project models show here</b>: a model shipped from " + html.escape(FINAL_NOTEBOOK_WORDS) +
+                   ". Your " + html.escape(POINT_LABEL) + " and " + html.escape(RANGE_TABLE_LABEL) + " models stay on their own tabs. "
+                   "Ship your final project model and your row appears here within about two hours. Grey rows are the yardsticks "
+                   "(ISO New England, the class median and same hour yesterday, which is 0% skill by definition) and Dr. Dave's models.")
+            if student_rank == 0:
+                who = who + " <b>No student has shipped a final project model yet.</b>"
+            elif is_preview:
+                who = who + " For the first three days after you ship, this preview still includes forecasts your earlier model made."
         if is_preview:
             final_card = ("""<div class="card scroll"><h2>Final project &middot; PREVIEW (not graded)</h2>
 <p class="note" style="margin-top:0"><b>A practice run, not your grade.</b> Real scoring starts """ + start_words(FINAL_START_LOCAL) +
@@ -1014,6 +1058,15 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                    "A dotted line marks an hour where a new model took over, so the band can change shape there. "
                    "Only hours that are over are shown, so nobody can copy a range.")
     range_section = range_card(ranges, names, "Your ranges, hour by hour", range_intro, instructors)
+    final_range_section = range_section
+    if FINAL_MODELS_ONLY:
+        final_intro = ("One chart per final project model, all on the same scale: the last 48 hours that are over, and only the "
+                       "hours your final project model forecast (a model shipped today fills in from the right). Black is the actual "
+                       "load. Blue is the forecast: the line is the expected value and the shaded band runs from the low to the high, "
+                       "and about 8 hours in 10 should land inside it; a red dot is an hour the actual load got out. Switch between "
+                       "the forecast made 1 hour before each hour and the one made 24 hours before, and hover any hour for its numbers.")
+        final_range_section = range_card(final_models_chart(ranges, models), names, "Final project models, hour by hour",
+                                         final_intro, instructors)
     final_started = final is not None and len(final) > 0 and not ("preview" in final.columns and bool(final["preview"].iloc[0]))
     default_tab = "final" if final_started else ("range" if lab6 is not None and len(lab6) > 0 else "point")
     point_note = ""
@@ -1037,7 +1090,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 <section class="tabpanel" data-panel="point">""" + point_card + """</section>
 <section class="tabpanel" data-panel="range">""" + lab6_card + """</section>
 <section class="tabpanel" data-panel="final">""" + final_card + """</section>
-<section class="tabpanel" data-panel="range final">""" + range_section + """</section>
+<section class="tabpanel" data-panel="range">""" + range_section + """</section>
+<section class="tabpanel" data-panel="final">""" + final_range_section + """</section>
 """ + TAB_SCRIPT.replace("DEFAULT_TAB", default_tab)
 
     return """<!doctype html>
