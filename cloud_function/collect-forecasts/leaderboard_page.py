@@ -944,10 +944,17 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     # Final project: the grading window, everyone on the same forecasts, missed ones filled with same hour yesterday
     final_card = ""
     if final is not None and len(final) > 0:
+        # Who shows: students (and Dr. Dave) with a range in the window, plus three grey yardsticks. Students with no
+        # range yet are left off the page (the private scores file still has everyone: no range = 0 points for row 1).
+        keep_baselines = ["BASELINE: ISO New England's forecast", "BASELINE: class median range (all students)",
+                          "BASELINE: same hour yesterday"]
+        has_range = final["has_range"].fillna(False).astype(bool) if "has_range" in final.columns else final["netid"].notna()
+        is_baseline = final["baseline"].fillna(False).astype(bool) if "baseline" in final.columns else final["netid"].str.startswith("BASELINE")
+        shown = final[(has_range & ~is_baseline) | final["netid"].isin(keep_baselines)]
         final_rows = []
         student_rank = 0
-        for i in range(len(final)):
-            row = final.iloc[i]
+        for i in range(len(shown)):
+            row = shown.iloc[i]
             label, rank_cell, css = row_identity(row["netid"], names, instructors)
             if css == "":
                 student_rank += 1
@@ -956,23 +963,31 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
             final_rows.append("<tr" + css + "><td>" + rank_cell + '</td><td class="name">' +
                               html.escape(label) + '</td><td class="skill">' +
                               number(row["crps_skill_pct"], 1, "%") + "</td><td>" + number(row["crps_mw"], 1) + "</td><td>" +
-                              number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["range_width_mw"]) +
-                              "</td><td>" + number(row["live_pct"], 0, "%") + "</td><td>" + number(row["forecasts_missed"]) +
+                              number(row["range_coverage_pct"], 0, "%") + "</td><td>" + number(row["live_pct"], 0, "%") +
                               '</td><td class="model">' + model_words(models.get(row["netid"]), short=True) + "</td></tr>")
         window = eastern(final["window_first_hour_utc"].iloc[0]) + " to " + eastern(final["window_last_hour_utc"].iloc[0])
         is_preview = "preview" in final.columns and bool(final["preview"].iloc[0])
+        header = ("<table><thead><tr><th>Rank</th><th>Forecaster</th>"
+                  '<th title="How much better than same hour yesterday. Higher is better.">CRPS skill<br><span class="note">higher is better</span></th>'
+                  '<th title="The leaderboard score for a range, in MW. Lower is better.">CRPS (MW)<br><span class="note">lower is better</span></th>'
+                  '<th title="Share of hours the actual load landed between your low and high. Aim for about 80%.">Inside range<br><span class="note">aim for about 80%</span></th>'
+                  '<th title="Share of the window forecasts you made in time. A missed one counts as same hour yesterday.">Live</th>'
+                  '<th title="The model making your forecasts right now">Live model</th></tr></thead>')
+        who = (" Only forecasters with a range show here; grey rows are the yardsticks (ISO New England, the class median and "
+               "same hour yesterday, which is 0% skill by definition). No range yet? Ship one and your row appears within about two hours.")
         if is_preview:
-            final_card = """<div class="card scroll"><h2>Final project &middot; PREVIEW (not graded)</h2>
-<p class="note" style="margin-top:0"><b>A practice run, not your grade.</b> Scoring for real starts """ + start_words(FINAL_START_LOCAL) + """ and runs to """ + day_words(FINAL_END_LOCAL) + """. Until then, this table scores the last few days (""" + window + """) exactly the way the final will: every hour, 1 to 24 hours ahead, ranked by <b>CRPS skill (higher is better)</b>; CRPS in MW is lower is better. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your skill toward 0%. <b>Live</b> is the share of those forecasts you made. This preview resets when the real window opens.</p>
-<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th><th title="The model making your forecasts right now">Live model</th></tr></thead>
-<tbody>""" + "".join(final_rows) + """</tbody></table></div>
-"""
+            final_card = ("""<div class="card scroll"><h2>Final project &middot; PREVIEW (not graded)</h2>
+<p class="note" style="margin-top:0"><b>A practice run, not your grade.</b> Real scoring starts """ + start_words(FINAL_START_LOCAL) +
+                          " and runs to " + day_words(FINAL_END_LOCAL) + ". This preview scores the last few days (" + window +
+                          ") the same way: every hour, 1 to 24 hours ahead, and a forecast you didn't make in time counts as same hour yesterday." +
+                          who + "</p>\n" + header + "\n<tbody>" + "".join(final_rows) + "</tbody></table></div>\n")
         else:
-            final_card = """<div class="card scroll"><h2>Final project &middot; the grading window</h2>
-<p class="note" style="margin-top:0">""" + day_words(FINAL_START_LOCAL) + " to " + day_words(FINAL_END_LOCAL) + """, so far """ + window + """. Everyone is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead. A forecast you didn't make in time counts as same hour yesterday with no range, so a missed hour pulls your CRPS skill toward 0%. <b>Live</b> is the share of those forecasts you made. Scores use the live load; the final grade uses the official metered load.</p>
-<table><thead><tr><th>Rank</th><th>Forecaster</th><th>CRPS skill</th><th>CRPS (MW)</th><th>Inside range</th><th>Range width (MW)</th><th>Live</th><th>Missed forecasts</th><th title="The model making your forecasts right now">Live model</th></tr></thead>
-<tbody>""" + "".join(final_rows) + """</tbody></table></div>
-"""
+            final_card = ("""<div class="card scroll"><h2>Final project &middot; the grading window</h2>
+<p class="note" style="margin-top:0">""" + day_words(FINAL_START_LOCAL) + " to " + day_words(FINAL_END_LOCAL) + ", so far " + window +
+                          ". Everyone is scored on the same forecasts: every hour in the window, 1 to 24 hours ahead. A forecast you didn't make "
+                          "in time counts as same hour yesterday with no range, so a missed hour pulls your CRPS skill toward 0%." + who +
+                          " Scores use the live load; the final grade uses the official metered load.</p>\n" + header + "\n<tbody>" +
+                          "".join(final_rows) + "</tbody></table></div>\n")
 
     if final_card == "":
         final_card = """<div class="card"><h2>Final project &middot; the grading window</h2>
