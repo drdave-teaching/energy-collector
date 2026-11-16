@@ -12,6 +12,7 @@
 #        class/model_cards.csv             one row per student: their live model card
 #        class/status_latest.csv           who is ok / not shared yet / no forecasts yet / stale
 #        class/status_history.csv          every hour's status, so you can see when someone stopped
+#        class/model_versions.csv          every model each student shipped and the notebook it came from
 #        class/final_project_scores.csv    final project (A11): CRPS skill over the grading window, missed forecasts
 #                                          filled with same hour yesterday, and rubric row 1 points (private)
 # HTTP entrypoint: collect_http
@@ -594,6 +595,56 @@ def fill_missed(master, actual, netids, hours):
     return pd.concat(tables, ignore_index=True)
 
 
+MODEL_VERSIONS_KEY = "class/model_versions.csv"
+
+
+def remember_model_versions(mine, card_by_netid):
+    """Keep a list of every model each student has shipped and the notebook it came from. A model card only describes
+    the live model, so without this list an earlier model's notebook is forgotten the moment a new one ships."""
+    rows = []
+    for netid in card_by_netid:
+        card = card_by_netid[netid]
+        version = str(card.get("trained_at", "")).strip()
+        if version == "" or version.lower() == "nan":
+            continue
+        rows.append({"netid": netid, "model_version": version, "notebook": str(card.get("notebook", ""))})
+    table = pd.DataFrame(rows, columns=["netid", "model_version", "notebook"])
+    known = read_csv(mine, MODEL_VERSIONS_KEY)
+    if known is not None and len(known) > 0:
+        table = pd.concat([known[["netid", "model_version", "notebook"]], table], ignore_index=True)
+    table = table.astype(str).drop_duplicates(["netid", "model_version"], keep="last")
+    write_csv(mine, MODEL_VERSIONS_KEY, table)
+    return table
+
+
+def final_project_rows(master, versions):
+    """OPIM 5512: the forecasts that count for the final project, which are only the ones a final project model made.
+    A forecast from a Lab 5 or Lab 6 model is left out, so that hour is scored as a missed hour (same hour yesterday).
+    A Lab 6B model writes the same range_method as the final project notebook, so those are told apart by the notebook
+    each model version came from (the list remember_model_versions keeps)."""
+    if "range_method" not in master.columns:
+        return master.iloc[0:0]
+    method = master["range_method"].astype(str).str.replace("_nws", "", regex=False)
+    keep = method.isin(FINAL_PROJECT_METHODS)
+    if versions is not None and len(versions) > 0 and "model_version" in master.columns:
+        from_lab = versions[versions["notebook"].astype(str).str.startswith("Lab 6")]
+        lab_keys = (from_lab["netid"].astype(str) + "|" + from_lab["model_version"].astype(str)).tolist()
+        key = master["netid"].astype(str) + "|" + master["model_version"].astype(str)
+        keep = keep & ~key.isin(lab_keys)
+    return master[keep]
+
+
+def since_first_forecast(table):
+    """Preview only: each forecaster is scored from the hour their final project model made its first forecast, so a
+    model shipped today is not buried under three days of missed hours. A forecast it misses after that still counts
+    as same hour yesterday. (The grading window has no such start: every hour in it counts.)"""
+    issued = pd.to_datetime(table["issued_at_utc"], utc=True)
+    made = table[~table["filled"].astype(bool)]
+    first = pd.to_datetime(made["issued_at_utc"], utc=True).dt.floor("h").groupby(made["netid"]).min()
+    start = table["netid"].map(first)
+    return table[start.isna() | (issued >= start)]
+
+
 def build_final_board(mine, master, actual, isone, roster):
     """Final project (A11): CRPS skill over the grading window, with missed forecasts filled with same hour yesterday.
     Writes class/final_project_scores.csv (private: NetIDs and rubric points). Returns the table without points."""
@@ -606,7 +657,18 @@ def build_final_board(mine, master, actual, isone, roster):
         return None
     instructors = instructor_netids(roster)
     netids = roster["netid"].tolist()
-    pairs = score_forecasts(fill_missed(master, actual, netids, hours), actual, isone)
+    counted = master
+    if not REQUIRE_KERAS:                    # 5512: only forecasts from a final project model count
+        versions = None
+        try:
+            versions = read_csv(mine, MODEL_VERSIONS_KEY)
+        except Exception as err:
+            logging.error("Model versions: %s %s", err, traceback.format_exc())
+        counted = final_project_rows(master, versions)
+    to_score = fill_missed(counted, actual, netids, hours)
+    if preview and not REQUIRE_KERAS:
+        to_score = since_first_forecast(to_score)
+    pairs = score_forecasts(to_score, actual, isone)
     if len(pairs) == 0:
         return None
     rows = []
@@ -643,6 +705,7 @@ def build_final_board(mine, master, actual, isone, roster):
         return final
 
     # Rubric row 1: 20 x (skill - lowest) / (highest - lowest) among students with a range; no range = 0 points.
+    # In 5512 "a range" means a range from a final project model (see final_project_rows): no final project model, 0 points.
     # Second anchor (Dr. Dave's call): the lowest student who was live 90%+ of the window gets 0 (anyone below, 0).
     graded = final[~final["instructor"] & ~final["baseline"] & final["has_range"] & final["crps_skill_pct"].notna()]
     final["score_points"] = 0.0
@@ -931,6 +994,10 @@ def run_once():
         master_rows = int(len(master))
     if len(cards) > 0:
         write_csv(mine, "class/model_cards.csv", pd.DataFrame(cards))
+        try:                                  # a problem here never stops the collecting
+            remember_model_versions(mine, card_by_netid)
+        except Exception as err:
+            logging.error("Model versions: %s %s", err, traceback.format_exc())
 
     leaderboard_rows = 0
     if len(tables) > 0 and ACTUALS_BUCKET:

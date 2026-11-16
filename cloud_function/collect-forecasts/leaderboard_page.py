@@ -1039,19 +1039,21 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                   '<th title="How much better than same hour yesterday. Higher is better.">CRPS skill<br><span class="note">higher is better</span></th>'
                   '<th title="The leaderboard score for a range, in MW. Lower is better.">CRPS (MW)<br><span class="note">lower is better</span></th>'
                   '<th title="Share of hours the actual load landed between your low and high. Aim for about 80%.">Inside range<br><span class="note">aim for about 80%</span></th>'
-                  '<th title="Share of the window forecasts you made in time. A missed one counts as same hour yesterday.">Live</th>'
+                  '<th title="Share of the window forecasts ' + ("your final project model" if FINAL_MODELS_ONLY else "you") + ' made in time. A missed one counts as same hour yesterday.">Live</th>'
                   '<th title="The model making your forecasts right now">Live model</th></tr></thead>')
         who = (" Only forecasters with a range show here; grey rows are the yardsticks (ISO New England, the class median and "
                "same hour yesterday, which is 0% skill by definition). No range yet? Ship one and your row appears within about two hours.")
         if FINAL_MODELS_ONLY:
             who = (" <b>Only final project models show here</b>: a model shipped from " + html.escape(FINAL_NOTEBOOK_WORDS) +
-                   ". Your " + html.escape(POINT_LABEL) + " and " + html.escape(RANGE_TABLE_LABEL) + " models stay on their own tabs. "
+                   ". " + html.escape(POINT_LABEL) + " and " + html.escape(RANGE_TABLE_LABEL) + " were practice for this, and those "
+                   "models stay on their own tabs. Only forecasts your final project model made count here: an hour it didn't "
+                   "forecast counts as same hour yesterday. "
                    "Ship your final project model and your row appears here within about two hours. Grey rows are the yardsticks "
                    "(ISO New England, the class median and same hour yesterday, which is 0% skill by definition) and Dr. Dave's models.")
             if student_rank == 0:
                 who = who + " <b>No student has shipped a final project model yet.</b>"
             elif is_preview:
-                who = who + " For the first three days after you ship, this preview still includes forecasts your earlier model made."
+                who = who + " This preview starts counting at the hour you shipped your final project model."
         if is_preview:
             final_card = ("""<div class="card scroll"><h2>Final project &middot; PREVIEW (not graded)</h2>
 <p class="note" style="margin-top:0"><b>A practice run, not your grade.</b> Real scoring starts """ + start_words(FINAL_START_LOCAL) +
