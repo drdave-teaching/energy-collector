@@ -691,7 +691,9 @@ def range_panel(item, rank, name, chart, x, y, width, height, left, right, top, 
         if len(switches) > 1:
             summary = summary + " &middot; " + str(len(switches)) + " model switches"
     else:
-        summary = "no forecasts at this lead in the last " + str(len(chart["actual"])) + " hours"
+        ahead = "1 hour ahead" if item.get("lead") == 1 else str(item.get("lead")) + " hours ahead"
+        summary = ("nothing yet at " + ahead + " in the last " + str(len(chart["actual"])) + " hours. A new model's first " +
+                   "forecast this far ahead shows here about " + str(item.get("lead", 0) + 2) + " hours after it ships")
     return ('<figure class="rangepanel" data-name="' + html.escape(item["netid_key"]) + '"><figcaption><b>' + rank + html.escape(name) + "</b><span>" + summary +
             "</span></figcaption>" + "".join(parts) + "</figure>")
 
@@ -786,6 +788,7 @@ def range_card(chart, names, title, intro, instructors=()):
         panels = []
         for position, item in enumerate(chart["by_lead"][lead]):
             item["netid_key"] = "f" + str(position + 1)          # never the NetID on the public page
+            item["lead"] = lead
             panels.append(range_panel(item, prefixes[position], names.get(item["netid"], "Forecaster"), chart, x, y, width, height, left,
                                       right, top, bottom, ticks))
         sets.append('<div class="rangeset' + ("" if on else " hidden") + '" data-lead="' + str(lead) + '">' +
@@ -1226,6 +1229,9 @@ td.model { text-align:left; white-space:normal; min-width:170px; font-size:13px;
 <li>A MW outside costs <b>10 times</b> a MW of width. Wide is safe but adds up; too narrow is cheap until the actual gets out.</li>
 <li>With no range (low = expected = high) the score is exactly your Avg miss, |actual &minus; expected|, the """ + html.escape(POINT_LABEL) + """ score. So everyone ranks on one scale.</li>
 </ul>
+<p style="margin:0 0 8px"><b>CRPS skill</b>, the column the boards are ranked by, compares your CRPS with same hour yesterday's on the exact hours you forecast:</p>
+<p style="margin:0 0 8px;text-align:center"><b>CRPS skill = average over 1&ndash;6, 7&ndash;12, 13&ndash;18 and 19&ndash;24 hours ahead of ( 1 &minus; your CRPS &divide; same hour yesterday's CRPS )</b></p>
+<p class="note" style="margin:0 0 10px">0% means no better than same hour yesterday, 50% means half its score, and below 0% means worse. Each block of hours ahead counts the same, so the hard far-ahead hours matter as much as the next-hour ones. In the first day or two after you ship, some blocks hold only a few hours, so your skill can jump around (even far below 0%). It settles as the hours add up.</p>
 <p style="margin:0 0 6px">Each hourly run sends <b>24 rows</b>, one per hour ahead, each with its own low, expected and high. At 2:20 p.m. your model forecasts 3 p.m. today through 2 p.m. tomorrow. When one of those hours is over, that row gets scored, and your score is the average over every row of every run. Far-ahead rows are harder, so an honest range is usually wider for them.</p>
 <p style="margin:0 0 6px">Take one of those rows: <b>1 p.m. tomorrow</b>, 23 hours ahead. The actual load turns out to be 3,100 MW. Four forecasters all expected 3,000 MW, so all four missed by 100 MW, but their ranges differ:</p>
 <div class="scroll"><table style="min-width:640px">
