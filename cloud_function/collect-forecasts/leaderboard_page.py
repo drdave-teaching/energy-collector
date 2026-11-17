@@ -810,7 +810,7 @@ TAB_SCRIPT = """<script>
   var names = {"#lab5": "point", "#lab6": "range", "#final": "final", "#point": "point", "#range": "range"};
   var start = "DEFAULT_TAB";
   var saved = null;
-  try { saved = localStorage.getItem("leaderboard-tab"); } catch (e) {}
+  try { saved = localStorage.getItem("TAB_KEY"); } catch (e) {}
   if (saved) { start = saved; }
   if (names[window.location.hash]) { start = names[window.location.hash]; }
   document.documentElement.classList.add("js");
@@ -826,7 +826,7 @@ TAB_SCRIPT = """<script>
       var shows = (" " + panels[j].getAttribute("data-panel") + " ").indexOf(" " + tab + " ") >= 0;
       panels[j].classList.toggle("on", shows);
     }
-    try { localStorage.setItem("leaderboard-tab", tab); } catch (e) {}
+    try { localStorage.setItem("TAB_KEY", tab); } catch (e) {}
   }
   var all = document.querySelectorAll(".tabs button");
   for (var k = 0; k < all.length; k++) {
@@ -1093,6 +1093,10 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                                          final_intro, instructors)
     final_started = final is not None and len(final) > 0 and not ("preview" in final.columns and bool(final["preview"].iloc[0]))
     default_tab = "final" if final_started else ("range" if lab6 is not None and len(lab6) > 0 else "point")
+    tab_key = "leaderboard-tab"              # where the browser remembers the tab you clicked last
+    if FINAL_MODELS_ONLY:                    # 5512: the labs were practice, so the page opens on the final project tab.
+        default_tab = "final"                # A new key drops a tab saved before this change, once.
+        tab_key = "leaderboard-tab-final"
     point_note = ""
     if point is not None:
         point_note = ("Only forecasts with no range (an expected value only). When you ship a range model, your row here "
@@ -1116,7 +1120,7 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
 <section class="tabpanel" data-panel="final">""" + final_card + """</section>
 <section class="tabpanel" data-panel="range">""" + range_section + """</section>
 <section class="tabpanel" data-panel="final">""" + final_range_section + """</section>
-""" + TAB_SCRIPT.replace("DEFAULT_TAB", default_tab)
+""" + TAB_SCRIPT.replace("DEFAULT_TAB", default_tab).replace("TAB_KEY", tab_key)
 
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
