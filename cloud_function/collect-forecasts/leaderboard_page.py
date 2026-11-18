@@ -27,6 +27,8 @@ FINAL_MODELS_ONLY = os.getenv("REQUIRE_KERAS", "false").strip().lower() not in [
 INSTRUCTOR_ON_LAB_TABS = os.getenv("INSTRUCTOR_ON_LAB_TABS", "false" if FINAL_MODELS_ONLY else "true").strip().lower() in ["1", "true", "yes"]
 FINAL_NOTEBOOK_WORDS = os.getenv("FINAL_NOTEBOOK_WORDS", "the final project notebook (Part 7)")
 FINAL_END_LOCAL = os.getenv("FINAL_END_LOCAL", "2026-12-04")
+# Same setting as in main.py: student forecasts for hours inside the final window are not shown ahead of time
+HIDE_FUTURE_IN_FINAL_WINDOW = os.getenv("HIDE_FUTURE_IN_FINAL_WINDOW", "true" if FINAL_MODELS_ONLY else "false").strip().lower() in ["1", "true", "yes"]
 
 
 def start_words(day_text):
@@ -935,6 +937,16 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
     if SHOW_STUDENT_FUTURE:
         future_note = ("For " + POINT_LABEL + " the next 24 hours show everyone&rsquo;s newest forecast, so you can see how your model "
                        "compares before the hour arrives (hover a line for its nickname). ")
+        if HIDE_FUTURE_IN_FINAL_WINDOW:
+            first_graded = pd.Timestamp(FINAL_START_LOCAL).tz_localize("America/New_York").tz_convert("UTC")
+            if pd.Timestamp(now) < first_graded:
+                future_note = ("Until final project scoring starts " + start_words(FINAL_START_LOCAL) + ", the next 24 hours show "
+                               "everyone&rsquo;s newest forecast (the expected value), so you can see how your model compares before the "
+                               "hour arrives (hover a line for its nickname). Hours inside the scoring window are never shown ahead "
+                               "of time, so nobody can copy a forecast that counts. ")
+            else:
+                future_note = ("Final project scoring is on, so student forecasts for the next 24 hours are hidden until each hour "
+                               "is over: nobody can copy a forecast that counts. ")
     if live is not None:
         live_svg, live_legend, live_picker = live_chart(live, names)
         if live_svg:

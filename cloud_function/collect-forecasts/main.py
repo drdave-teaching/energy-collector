@@ -51,6 +51,9 @@ SHOW_STUDENT_FUTURE = os.getenv("SHOW_STUDENT_FUTURE", "true").strip().lower() i
 # missing summary) is not collected, and the student's status says why.
 REQUIRE_KERAS = os.getenv("REQUIRE_KERAS", "false").strip().lower() in ["1", "true", "yes"]
 RUN_SUMMARY_KEY = "energy/forecasts/run_summary.json"
+# Final project: the public next-24-hour forecasts stop at the grading window. A forecast for an hour inside the window
+# is never shown before that hour is over, so nobody can copy a forecast that counts. On for 5512; 5509 sets it itself.
+HIDE_FUTURE_IN_FINAL_WINDOW = os.getenv("HIDE_FUTURE_IN_FINAL_WINDOW", "false" if REQUIRE_KERAS else "true").strip().lower() in ["1", "true", "yes"]
 KERAS_RANGE_METHODS = ["none", "lstm_hrrr_runs", "lstm_quantiles", "lstm_quantiles_pooled"]
 # Where students ship a model and run the share cell (only shown in the private status table)
 SHIP_STEP = os.getenv("SHIP_STEP", "Lab 5 Part 7")
@@ -809,6 +812,9 @@ def build_live_chart(client, master, board, roster, now):
     # Lab 5 only (SHOW_STUDENT_FUTURE): every student's newest forecast for the next 24 hours, and their median
     if SHOW_STUDENT_FUTURE:
         students_next = upcoming[~upcoming["netid"].isin(instructors)]
+        if HIDE_FUTURE_IN_FINAL_WINDOW:      # hours from the first graded hour on stay hidden until they are over
+            first_graded = pd.Timestamp(FINAL_START_LOCAL).tz_localize("America/New_York").tz_convert("UTC")
+            students_next = students_next[students_next["target"] < first_graded]
         future = students_next.pivot_table(index="target", columns="netid", values="predicted_load_mw")
         if future.shape[1] > 0:
             live["future_by_student"] = future
