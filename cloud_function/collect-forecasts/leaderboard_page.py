@@ -1062,7 +1062,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
             who = (" <b>Only final project models show here</b>: a model shipped from " + html.escape(FINAL_NOTEBOOK_WORDS) +
                    ". " + html.escape(POINT_LABEL) + " and " + html.escape(RANGE_TABLE_LABEL) + " were practice for this, and those "
                    "models stay on their own tabs. Only forecasts your final project model made count here: an hour it didn't "
-                   "forecast counts as same hour yesterday. "
+                   "forecast counts as same hour yesterday. One model per NetID: if you ship again, your newest final "
+                   "project model takes over from that hour on. "
                    "Ship your final project model and your row appears here within about two hours. Grey rows are the yardsticks "
                    "(ISO New England, the class median and same hour yesterday, which is 0% skill by definition) and Dr. Dave's models.")
             if student_rank == 0:
