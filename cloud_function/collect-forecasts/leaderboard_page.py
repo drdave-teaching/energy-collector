@@ -1057,7 +1057,8 @@ def render(board, by_lead, roster, waiting, now=None, live=None, statuses=None, 
                   '<th title="Share of the window forecasts ' + ("your final project model" if FINAL_MODELS_ONLY else "you") + ' made in time. A missed one counts as same hour yesterday.">Live</th>'
                   '<th title="The model making your forecasts right now">Live model</th></tr></thead>')
         who = (" Only forecasters with a range show here; grey rows are the yardsticks (ISO New England, the class median and "
-               "same hour yesterday, which is 0% skill by definition). No range yet? Ship one and your row appears within about two hours.")
+               "same hour yesterday, which is 0% skill by definition). One model per NetID: if you ship again, your newest model takes "
+               "over from that hour on. No range yet? Ship one and your row appears within about two hours.")
         if FINAL_MODELS_ONLY:
             who = (" <b>Only final project models show here</b>: a model shipped from " + html.escape(FINAL_NOTEBOOK_WORDS) +
                    ". " + html.escape(POINT_LABEL) + " and " + html.escape(RANGE_TABLE_LABEL) + " were practice for this, and those "
