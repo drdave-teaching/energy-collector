@@ -630,6 +630,12 @@ def final_project_rows(master, versions):
     method = master["range_method"].astype(str).str.replace("_nws", "", regex=False)
     keep = method.isin(FINAL_PROJECT_METHODS)
     if versions is not None and len(versions) > 0 and "model_version" in master.columns:
+        # A model shipped from the final project notebook counts whatever range_method its forecast function writes
+        # (a student who changed the code can write e.g. "quantile_models"), as long as it has a range.
+        from_final = versions[versions["notebook"].astype(str).str.startswith("Final project")]
+        final_keys = (from_final["netid"].astype(str) + "|" + from_final["model_version"].astype(str)).tolist()
+        row_key = master["netid"].astype(str) + "|" + master["model_version"].astype(str)
+        keep = keep | (row_key.isin(final_keys) & ~method.isin(["none", "", "nan"]))
         from_lab = versions[versions["notebook"].astype(str).str.startswith("Lab 6")]
         lab_keys = (from_lab["netid"].astype(str) + "|" + from_lab["model_version"].astype(str)).tolist()
         key = master["netid"].astype(str) + "|" + master["model_version"].astype(str)
@@ -860,6 +866,8 @@ def model_label(card, range_method):
         return deep_learning_model_label(card, method)
     if method == "two_stage_quantile":
         return "Dr. Dave's two-stage model"
+    if str(card.get("notebook", "")).startswith("Final project") and method not in ["none", "", "nan"]:
+        return "Final project (NWS)"
     if method in ["range_model", "quantile_forest"]:
         if str(card.get("notebook", "")).startswith("Lab 6"):
             return "Lab 6B: quantile forest (NWS)"
@@ -905,6 +913,8 @@ def is_final_project_model(card, range_method):
     if REQUIRE_KERAS:
         return True
     method = str(range_method).replace("_nws", "")
+    if str((card or {}).get("notebook", "")).startswith("Final project") and method not in ["none", "", "nan"]:
+        return True                          # shipped from the final project notebook, whatever method its code writes
     if method not in FINAL_PROJECT_METHODS:
         return False
     return not str((card or {}).get("notebook", "")).startswith("Lab 6")
